@@ -1,0 +1,12 @@
+{
+    "mouse": true,
+    "keyboard": true,
+    "gamepad": true,
+    "voice_control": false,
+    "ai_assistant": false,
+    "ssh": false,
+    "ftp_server": false,
+    "notifications": false,
+    "sound": false,
+    "microphone": false
+}

@@ -1,0 +1,51 @@
+# это mykivy
+
+<FeatureButton>:
+    orientation: "vertical"
+    size_hint: 1, None
+    height: self.width
+    padding: dp(6)
+    canvas.before:
+        Color:
+            rgba: (0.20, 0.55, 0.90, 1) if self.active else (0.18, 0.18, 0.18, 1)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(10)]
+
+
+<EmptyScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(10)
+        spacing: dp(10)
+
+        Button:
+            text: "back"
+            size_hint_y: None
+            height: dp(48)
+            on_release:
+                app.root.current = "main"
+
+
+<MainScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(10)
+        spacing: dp(10)
+
+        Label:
+            id: status
+            text: "Looking for a server...."
+            size_hint_y: None
+            height: dp(40)
+            font_size: "16sp"
+
+        ScrollView:
+            do_scroll_x: False
+            GridLayout:
+                id: grid
+                cols: 3
+                spacing: dp(8)
+                size_hint_y: None
+                height: self.minimum_height

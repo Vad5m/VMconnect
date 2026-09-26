@@ -1,0 +1,204 @@
+<RoundedTextInput>:
+    canvas.before:
+        Color:
+            rgba: root.bg_color
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [root.radius]
+    TextInput:
+        id: input
+        text: root.text
+        hint_text: root.hint_text
+        input_filter: root.input_filter
+        background_color: 0, 0, 0, 0
+        foreground_color: root.fg_color
+        cursor_color: root.cursor_color
+        padding: dp(12), dp(12)
+        multiline: True
+
+<BackButton>:
+    canvas.before:
+        Color:
+            rgba: (0.36, 0.36, 0.38, 1) if self.state == 'down' else (0.23, 0.23, 0.24, 1)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(12)]
+
+<KeyboardRoot>:
+    orientation: 'vertical'
+    padding: dp(10)
+    spacing: dp(8)
+    canvas.before:
+        Color:
+            rgba: 0.07, 0.07, 0.08, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        size_hint_y: None
+        height: dp(48)
+        spacing: dp(6)
+
+        BackButton:
+            id: btn_back
+
+        Label:
+            text: 'keyboard'
+            color: 0.95, 0.95, 0.95, 1
+            font_size: '18sp'
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+
+        Widget:
+
+    BoxLayout:
+        size_hint_y: None
+        height: dp(48)
+        spacing: dp(6)
+
+        Label:
+            text: 'layout:'
+            size_hint_x: None
+            width: dp(90)
+            color: 0.7, 0.7, 0.7, 1
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+
+        RoundedButton:
+            id: btn_en
+            size_hint_x: None
+            width: dp(64)
+            canvas:
+                Color:
+                    rgba: (0.98, 0.64, 0.19, 1) if self.state == 'down' else (0.33, 0.33, 0.35, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.radius]
+            Label:
+                text: 'EN'
+                bold: btn_en.state == 'down'
+                color: (0, 0, 0, 1) if btn_en.state == 'down' else (0.95, 0.95, 0.95, 1)
+                font_size: '16sp'
+                pos: btn_en.pos
+                size: btn_en.size
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
+
+        RoundedButton:
+            id: btn_ru
+            size_hint_x: None
+            width: dp(64)
+            canvas:
+                Color:
+                    rgba: (0.98, 0.64, 0.19, 1) if self.state == 'down' else (0.33, 0.33, 0.35, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.radius]
+            Label:
+                text: 'RU'
+                bold: btn_ru.state == 'down'
+                color: (0, 0, 0, 1) if btn_ru.state == 'down' else (0.95, 0.95, 0.95, 1)
+                font_size: '16sp'
+                pos: btn_ru.pos
+                size: btn_ru.size
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
+
+        Widget:
+
+        RoundedButton:
+            id: btn_esc
+            size_hint_x: None
+            width: dp(64)
+            canvas:
+                Color:
+                    rgba: (0.36, 0.36, 0.38, 1) if self.state == 'down' else (0.23, 0.23, 0.24, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.radius]
+            Label:
+                text: 'Esc'
+                color: 0.95, 0.95, 0.95, 1
+                font_size: '14sp'
+                pos: btn_esc.pos
+                size: btn_esc.size
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
+
+    RoundedTextInput:
+        id: live_input
+        size_hint_y: 1
+        hint_text: 'write...'
+
+    BoxLayout:
+        size_hint_y: None
+        height: dp(52)
+        spacing: dp(6)
+
+        RoundedButton:
+            id: btn_tab
+            canvas:
+                Color:
+                    rgba: (0.36, 0.36, 0.38, 1) if self.state == 'down' else (0.23, 0.23, 0.24, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.radius]
+            Label:
+                text: 'Tab'
+                color: 0.95, 0.95, 0.95, 1
+                font_size: '14sp'
+                pos: btn_tab.pos
+                size: btn_tab.size
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
+
+        RoundedButton:
+            id: btn_enter
+            canvas:
+                Color:
+                    rgba: (0.36, 0.36, 0.38, 1) if self.state == 'down' else (0.23, 0.23, 0.24, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.radius]
+            Label:
+                text: 'Enter'
+                color: 0.95, 0.95, 0.95, 1
+                font_size: '14sp'
+                pos: btn_enter.pos
+                size: btn_enter.size
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size
+
+        RoundedButton:
+            id: btn_backspace
+            canvas:
+                Color:
+                    rgba: (0.36, 0.36, 0.38, 1) if self.state == 'down' else (0.23, 0.23, 0.24, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.radius]
+            Label:
+                text: 'Backspace'
+                color: 0.95, 0.95, 0.95, 1
+                font_size: '14sp'
+                pos: btn_backspace.pos
+                size: btn_backspace.size
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.size

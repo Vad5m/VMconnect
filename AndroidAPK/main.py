@@ -22,6 +22,8 @@ import mouse as mouse_module
 from mouse import DEFAULT_HOST, DEFAULT_PORT
 import keyboard as keyboard_module
 from keyboard import DEFAULT_HOST as KB_DEFAULT_HOST, DEFAULT_PORT as KB_DEFAULT_PORT
+import gamepad as gamepad_module
+from gamepad import DEFAULT_HOST as GP_DEFAULT_HOST, DEFAULT_PORT as GP_DEFAULT_PORT
 
 
 def load_kv_file(name: str):
@@ -101,6 +103,10 @@ class FeatureButton(ButtonBehavior, BoxLayout):
             app.open_keyboard()
             return
 
+        if self.text == "gamepad":
+            app.open_gamepad()
+            return
+
         if app.sock:
             try:
                 app.sock.sendall(
@@ -143,7 +149,6 @@ class mykivy(App):
         Thread(target=self._discover, daemon=True).start()
 
     def on_stop(self):
-        # корректно останавливаем HTTP-воркеры
         try:
             sm = self.root
             if sm is not None:
@@ -152,6 +157,9 @@ class mykivy(App):
                 if sm.has_screen("keyboard"):
                     keyboard_module.stop_keyboard_screen(
                         sm.get_screen("keyboard"))
+                if sm.has_screen("gamepad"):
+                    gamepad_module.stop_gamepad_screen(
+                        sm.get_screen("gamepad"))
         except Exception as e:
             print(f"on_stop: {e}")
 
@@ -199,11 +207,12 @@ class mykivy(App):
 
         sm.current = name
 
-    # ---------- mouse ----------
     def open_mouse(self):
         if not self.server_ip:
             print("mouse: server_ip ещё не найден")
             return
+
+        mouse_module.set_server(self.server_ip, DEFAULT_PORT)
 
         sm: ScreenManager = self.root
         if not sm.has_screen("mouse"):
@@ -212,7 +221,6 @@ class mykivy(App):
 
         sm.current = "mouse"
 
-    # ---------- keyboard ----------
     def open_keyboard(self):
         if not self.server_ip:
             print("keyboard: server_ip ещё не найден")
@@ -227,7 +235,20 @@ class mykivy(App):
 
         sm.current = "keyboard"
 
-    # ---------- discovery ----------
+    def open_gamepad(self):
+        if not self.server_ip:
+            print("gamepad: server_ip ещё не найден")
+            return
+
+        gamepad_module.set_server(self.server_ip, GP_DEFAULT_PORT)
+
+        sm: ScreenManager = self.root
+        if not sm.has_screen("gamepad"):
+            scr = gamepad_module.create_gamepad_screen("gamepad")
+            sm.add_widget(scr)
+
+        sm.current = "gamepad"
+
     def _discover(self):
         ip = find_server()
         Clock.schedule_once(lambda dt: self._on_found(ip))
@@ -236,8 +257,9 @@ class mykivy(App):
         main = self.root.get_screen("main")
         if ip:
             self.server_ip = ip
-            mouse_module.set_server(ip)
+            mouse_module.set_server(ip, DEFAULT_PORT)
             keyboard_module.set_server(ip, KB_DEFAULT_PORT)
+            gamepad_module.set_server(ip, GP_DEFAULT_PORT)
             self.host = ip
             main.ids.status.text = f"Найден сервер: {ip}"
             print(f"IP сервера сохранён: {self.server_ip}")
@@ -303,6 +325,7 @@ class mykivy(App):
             self.host = host
             mouse_module.set_server(host, self.port)
             keyboard_module.set_server(host, KB_DEFAULT_PORT)
+            gamepad_module.set_server(host, GP_DEFAULT_PORT)
         except Exception as e:
             print(f"on_ip_changed: {e}")
 

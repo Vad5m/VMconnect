@@ -6,6 +6,7 @@ from PyQt5.QtGui import QIcon
 from gui import SettingsWindow
 import mouse
 import keyboard
+import gamepad
 import app_connect
 
 
@@ -34,6 +35,10 @@ class Application:
         self.keyboard_thread = threading.Thread(target=keyboard.main, daemon=True)
         self.keyboard_thread.start()
 
+    def start_gamepad(self):
+        self.gamepad_thread = threading.Thread(target=gamepad.main, daemon=True)
+        self.gamepad_thread.start()
+
     def start_settings_server(self):
         app_connect.start_all()
 
@@ -44,6 +49,7 @@ class Application:
         self.start_settings_server()
         self.start_mouse()
         self.start_keyboard()
+        self.start_gamepad()
         self.window.show()
         exit_code = self.app.exec_()
         self.stop_server()

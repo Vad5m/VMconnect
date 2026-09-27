@@ -1,0 +1,6 @@
+PyQt5>=5.15.0
+python-uinput>=1.0.1
+Flask>=2.3.0
+Werkzeug>=2.3.0
+
+# json, socket, threading, time, subprocess, getpass, os, warnings, collections, urllib

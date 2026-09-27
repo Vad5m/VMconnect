@@ -241,13 +241,11 @@ class Touchpad(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.on_send = None
-        self.on_long_tap = None
         self._touches = {}
         self._two_finger = False
         self._last_scroll_avg_y = None
         self._scroll_accum = 0.0
         self._last_tap_time = None
-        self._long_tap_event = None
 
     def _safe_send(self, endpoint, payload):
         try:
@@ -265,12 +263,7 @@ class Touchpad(Widget):
             'start': touch.pos, 'last': touch.pos,
             'time': time.time(), 'moved': False,
         }
-        if len(self._touches) == 1:
-            if self.on_long_tap:
-                self._long_tap_event = Clock.schedule_once(
-                    lambda dt: self._fire_long_tap(touch.uid), 0.7)
         if len(self._touches) == 2:
-            self._cancel_long_tap()
             for info in self._touches.values():
                 info['moved'] = True
             self._two_finger = True
@@ -278,21 +271,6 @@ class Touchpad(Widget):
             self._last_scroll_avg_y = sum(ys) / len(ys)
             self._scroll_accum = 0.0
         return True
-
-    def _fire_long_tap(self, uid):
-        self._long_tap_event = None
-        if uid in self._touches and not self._touches[uid]['moved']:
-            if self.on_long_tap:
-                try:
-                    self.on_long_tap()
-                except Exception as e:
-                    Logger.error(f'long tap: {e}')
-                    show_error(str(e), title='Settings error')
-
-    def _cancel_long_tap(self):
-        if self._long_tap_event is not None:
-            self._long_tap_event.cancel()
-            self._long_tap_event = None
 
     def on_touch_move(self, touch):
         if touch.uid not in self._touches:
@@ -319,7 +297,6 @@ class Touchpad(Widget):
             if (abs(touch.x - sx) > self.tap_max_distance or
                     abs(touch.y - sy) > self.tap_max_distance):
                 info['moved'] = True
-                self._cancel_long_tap()
 
             dx = touch.x - prev_x
             dy = touch.y - prev_y
@@ -335,7 +312,6 @@ class Touchpad(Widget):
             return False
         touch.ungrab(self)
         info = self._touches.pop(touch.uid)
-        self._cancel_long_tap()
 
         duration = time.time() - info['time']
         was_two_finger = self._two_finger
@@ -366,37 +342,6 @@ class Touchpad(Widget):
             self._safe_send('/click', {'button': 'left'})
 
 
-class SettingsPopup(Popup):
-    current_host = ''
-    current_port = DEFAULT_PORT
-
-    def __init__(self, current_host, current_port, on_save=None, **kwargs):
-        super().__init__(**kwargs)
-        self.current_host = current_host
-        self.current_port = current_port
-        self._on_save = on_save
-        try:
-            self.ids.host_input.text = current_host
-            self.ids.port_input.text = str(current_port)
-        except Exception as e:
-            Logger.error(f'SettingsPopup init: {e}')
-
-    def save(self):
-        try:
-            host = self.ids.host_input.text.strip() or CURRENT_HOST
-            try:
-                port = int(self.ids.port_input.text.strip() or CURRENT_PORT)
-            except ValueError:
-                port = CURRENT_PORT
-            set_server(host, port)
-            if self._on_save:
-                self._on_save(host, port)
-            self.dismiss()
-        except Exception as e:
-            Logger.error(f'save settings: {e}')
-            show_error(str(e), title='Settings error')
-
-
 class MouseRoot(BoxLayout):
     sender = None
 
@@ -408,7 +353,6 @@ class MouseRoot(BoxLayout):
         touchpad = self.ids.get('touchpad')
         if touchpad is not None:
             touchpad.on_send = self.send
-            touchpad.on_long_tap = self.open_settings
 
         btn_left = self.ids.get('btn_left')
         if btn_left is not None:
@@ -438,17 +382,6 @@ class MouseRoot(BoxLayout):
 
     def send_click(self, button):
         self.send('/click', {'button': button})
-
-    def open_settings(self):
-        try:
-            SettingsPopup(
-                current_host=CURRENT_HOST,
-                current_port=CURRENT_PORT,
-                on_save=lambda h, p: set_server(h, p),
-            ).open()
-        except Exception as e:
-            Logger.error(f'open settings: {e}')
-            show_error(str(e), title='Settings error')
 
 
 def _load_mouse_kv():

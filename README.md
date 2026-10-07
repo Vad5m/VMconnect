@@ -1,6 +1,6 @@
 # VMconnect
 
-> **Only for Linux**
+> **Only for Linux + android**
 
 This is not a fork of kdeconnect, this is my personal project, 
 which does not even look like a project from kde, 

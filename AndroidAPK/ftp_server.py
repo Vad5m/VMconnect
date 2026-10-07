@@ -19,6 +19,7 @@ from kivy.uix.screenmanager import Screen
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.widget import Widget
 from kivy.utils import platform
+from kivy.core.window import Window
 
 from flask import (
     Flask, request, redirect, url_for, send_file, send_from_directory,
@@ -27,7 +28,6 @@ from flask import (
 
 FTP_PORT_PC = 42004
 FTP_PORT_PHONE = 42005
-
 DEFAULT_HOST = "192.168.1.42"
 
 _server_host = None
@@ -42,7 +42,34 @@ else:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEDIA_DIR = os.path.join(BASE_DIR, "data", "media")
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+
+
+def _find_templates_dir():
+    candidates = []
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        activity = PythonActivity.mActivity
+        if activity is not None:
+            files_dir = activity.getFilesDir().getAbsolutePath()
+            candidates.append(os.path.join(files_dir, "app", "templates"))
+            candidates.append(os.path.join(files_dir, "templates"))
+    except Exception:
+        pass
+    candidates.append(os.path.join(BASE_DIR, "templates"))
+    candidates.append(os.path.join(BASE_DIR, "app", "templates"))
+    candidates.append(os.path.join(os.getcwd(), "templates"))
+    candidates.append("/data/data/vad5m.dev.VMConnect/files/app/templates")
+    for c in candidates:
+        try:
+            if os.path.isdir(c) and os.path.isfile(os.path.join(c, "files.html")):
+                return c
+        except Exception:
+            continue
+    return candidates[0]
+
+
+TEMPLATES_DIR = _find_templates_dir()
 
 SERVER_READY = False
 ERRORS = []
@@ -93,29 +120,62 @@ def set_server(host, port=None):
     log(f"set_server: {_server_host}:{_server_port}")
 
 
-def request_android_permissions():
+def has_storage_permission():
     if not os.path.exists("/system/build.prop"):
-        return
+        return True
     try:
         from jnius import autoclass
-
         Build = autoclass("android.os.Build$VERSION")
-        if Build.SDK_INT >= 30:
-            Environment = autoclass("android.os.Environment")
-            if not Environment.isExternalStorageManager():
-                PythonActivity = autoclass("org.kivy.android.PythonActivity")
-                Settings = autoclass("android.provider.Settings")
-                Intent = autoclass("android.content.Intent")
-                Uri = autoclass("android.net.Uri")
-                activity = PythonActivity.mActivity
-                intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.setData(Uri.parse("package:" + activity.getPackageName()))
-                activity.startActivity(intent)
-                log("[PERM] Запрошен All files access")
-            else:
-                log("[PERM] All files access уже выдан")
+        if Build.SDK_INT < 30:
+            return True
+        Environment = autoclass("android.os.Environment")
+        return bool(Environment.isExternalStorageManager())
+    except Exception as e:
+        log(f"[PERM] check failed: {e}")
+        return False
+
+
+def request_android_permissions():
+    if not os.path.exists("/system/build.prop"):
+        return True
+    try:
+        from jnius import autoclass
+        Build = autoclass("android.os.Build$VERSION")
+        if Build.SDK_INT < 30:
+            return True
+        Environment = autoclass("android.os.Environment")
+        if Environment.isExternalStorageManager():
+            log("[PERM] already granted")
+            return True
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        Settings = autoclass("android.provider.Settings")
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        activity = PythonActivity.mActivity
+        intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+        intent.setData(Uri.parse("package:" + activity.getPackageName()))
+        activity.startActivity(intent)
+        log("[PERM] settings opened")
+        return False
     except Exception as e:
         log(f"[PERM] skip: {e}")
+        return False
+
+
+def _on_resume(*args):
+    global SERVER_READY
+    try:
+        if not SERVER_READY and has_storage_permission():
+            start_server()
+    except Exception as e:
+        log_error(f"on_resume: {e}")
+
+
+if platform == "android":
+    try:
+        Window.bind(on_resume=_on_resume)
+    except Exception as e:
+        log_error(f"bind on_resume: {e}")
 
 
 def _safe_path(rel):
@@ -425,11 +485,16 @@ def _create_app():
 def _start_flask():
     global _flask_app, SERVER_READY
     try:
-        log(f"[HTTP] ROOT={ROOT} PORT={_server_port} MEDIA={MEDIA_DIR}")
-        try:
+        log(f"[HTTP] ROOT={ROOT} PORT={_server_port} "
+            f"TPL={TEMPLATES_DIR} MEDIA={MEDIA_DIR}")
+        log(f"[TPL] exists={os.path.isdir(TEMPLATES_DIR)} "
+            f"files.html={os.path.isfile(os.path.join(TEMPLATES_DIR, 'files.html'))} "
+            f"error.html={os.path.isfile(os.path.join(TEMPLATES_DIR, 'error.html'))}")
+
+        if not has_storage_permission():
+            log_error("Нет MANAGE_EXTERNAL_STORAGE, сервер не стартует")
             request_android_permissions()
-        except Exception as e:
-            log_error(f"perm: {e}\n{traceback.format_exc()}")
+            return
 
         try:
             if not Path(ROOT).exists():
@@ -439,13 +504,12 @@ def _start_flask():
                 log("[ROOT] OK, доступен")
         except PermissionError as e:
             log_error(f"Нет доступа к ROOT {ROOT}: {e}")
+            return
         except Exception as e:
             log_error(f"Ошибка проверки ROOT: {e}\n{traceback.format_exc()}")
 
         if not os.path.isdir(MEDIA_DIR):
             log(f"[MEDIA] папка не найдена: {MEDIA_DIR}")
-        if not os.path.isdir(TEMPLATES_DIR):
-            log(f"[TEMPLATES] папка не найдена: {TEMPLATES_DIR}")
 
         from werkzeug.serving import make_server
 
@@ -559,14 +623,20 @@ class FtpServerRoot(BoxLayout):
         self._refresh(0)
 
     def _refresh(self, dt):
-        ip = _server_host or get_local_ip()
-        self.url_phone = f"http://{ip}:{FTP_PORT_PHONE}/"
-        self.url_pc = f"http://{ip}:{FTP_PORT_PC}/"
+        phone_ip = get_local_ip()
+        pc_ip = _server_host or DEFAULT_HOST
+        self.url_phone = f"http://{phone_ip}:{FTP_PORT_PHONE}/"
+        self.url_pc = f"http://{pc_ip}:{FTP_PORT_PC}/"
         self.phone_label = "Phone URL\n" + self.url_phone
         self.pc_label = "PC URL\n" + self.url_pc
-        self.status = (
-            f"Running: {self.url_phone}" if SERVER_READY else "Starting..."
-        )
+        if SERVER_READY:
+            self.status = f"Running: {self.url_phone}"
+        elif has_storage_permission():
+            self.status = "Starting..."
+            if _flask_thread is None or not _flask_thread.is_alive():
+                start_server(FTP_PORT_PHONE)
+        else:
+            self.status = "Нужно разрешение: Все файлы"
         return True
 
     def go_back(self):
@@ -620,8 +690,11 @@ def create_ftp_server_screen(name="ftp_server"):
     root.size_hint = (1, 1)
     scr.add_widget(root)
 
+    if not SERVER_READY and not has_storage_permission():
+        Clock.schedule_once(lambda dt: request_android_permissions(), 0.3)
+
     if not SERVER_READY and (_flask_thread is None or not _flask_thread.is_alive()):
-        Clock.schedule_once(lambda dt: start_server(), 0.2)
+        Clock.schedule_once(lambda dt: start_server(FTP_PORT_PHONE), 0.5)
 
     return scr
 

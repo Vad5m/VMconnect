@@ -24,6 +24,7 @@ import keyboard as keyboard_module
 from keyboard import DEFAULT_HOST as KB_DEFAULT_HOST, DEFAULT_PORT as KB_DEFAULT_PORT
 import gamepad as gamepad_module
 from gamepad import DEFAULT_HOST as GP_DEFAULT_HOST, DEFAULT_PORT as GP_DEFAULT_PORT
+import ftp_server as ftp_server_module
 
 
 def load_kv_file(name: str):
@@ -107,6 +108,10 @@ class FeatureButton(ButtonBehavior, BoxLayout):
             app.open_gamepad()
             return
 
+        if self.text == "ftp_server":
+            app.open_ftp_server()
+            return
+
         if app.sock:
             try:
                 app.sock.sendall(
@@ -160,6 +165,9 @@ class mykivy(App):
                 if sm.has_screen("gamepad"):
                     gamepad_module.stop_gamepad_screen(
                         sm.get_screen("gamepad"))
+                if sm.has_screen("ftp_server"):
+                    ftp_server_module.stop_ftp_server_screen(
+                        sm.get_screen("ftp_server"))
         except Exception as e:
             print(f"on_stop: {e}")
 
@@ -249,6 +257,13 @@ class mykivy(App):
 
         sm.current = "gamepad"
 
+    def open_ftp_server(self):
+        sm: ScreenManager = self.root
+        if not sm.has_screen("ftp_server"):
+            scr = ftp_server_module.create_ftp_server_screen("ftp_server")
+            sm.add_widget(scr)
+        sm.current = "ftp_server"
+
     def _discover(self):
         ip = find_server()
         Clock.schedule_once(lambda dt: self._on_found(ip))
@@ -260,6 +275,7 @@ class mykivy(App):
             mouse_module.set_server(ip, DEFAULT_PORT)
             keyboard_module.set_server(ip, KB_DEFAULT_PORT)
             gamepad_module.set_server(ip, GP_DEFAULT_PORT)
+            ftp_server_module.set_server(ip)
             self.host = ip
             main.ids.status.text = f"Найден сервер: {ip}"
             print(f"IP сервера сохранён: {self.server_ip}")
@@ -324,8 +340,9 @@ class mykivy(App):
                 return
             self.host = host
             mouse_module.set_server(host, self.port)
-            keyboard_module.set_server(host, KB_DEFAULT_PORT)
+            keyboard_module.set_server(host, KB_DEFAULT_HOST and KB_DEFAULT_PORT)
             gamepad_module.set_server(host, GP_DEFAULT_PORT)
+            ftp_server_module.set_server(host)
         except Exception as e:
             print(f"on_ip_changed: {e}")
 

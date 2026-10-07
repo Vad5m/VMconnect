@@ -1,0 +1,302 @@
+<!doctype html><html><head><meta charset=utf-8>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Files: {{ path }}</title>
+<link rel="icon" href="/media/folder.png">
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;
+     margin:0;padding:24px;min-height:100vh}
+a{color:#4af;text-decoration:none}
+a:hover{text-decoration:underline}
+.topbar{display:flex;justify-content:space-between;align-items:center;
+        margin-bottom:16px;gap:10px;flex-wrap:wrap}
+.lang-btn{background:#1c1c1c;border:1px solid #333;color:#eee;
+          padding:6px 14px;border-radius:8px;font-size:13px;
+          cursor:pointer;font-weight:600;display:inline-flex;
+          align-items:center;gap:6px}
+.lang-btn:hover{background:#2a2a2a}
+.lang-btn img{width:16px;height:16px;display:block}
+.crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:4px;
+        margin-bottom:16px;font-size:14px}
+.crumbs a{padding:4px 6px;border-radius:6px;display:inline-flex;
+          align-items:center;gap:5px}
+.crumbs a:hover{background:#222;text-decoration:none}
+.crumbs .sep{color:#555}
+.crumbs img{width:14px;height:14px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+         margin-bottom:20px}
+.up{background:#1c1c1c;padding:8px 14px;border-radius:8px;display:inline-flex;
+    align-items:center;gap:6px;color:#eee;font-size:14px}
+.up:hover{background:#2a2a2a;text-decoration:none}
+.up img{width:16px;height:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
+      gap:14px;max-width:1100px}
+.item{position:relative;display:flex;flex-direction:column;align-items:center;
+      padding:14px 8px;border-radius:10px;background:#181818;
+      border:1px solid #222;transition:.15s;overflow:hidden}
+.item:hover{background:#222;border-color:#333;transform:translateY(-2px)}
+.item .icon-wrap{width:64px;height:64px;display:flex;align-items:center;
+                 justify-content:center;margin-bottom:8px;border-radius:12px;
+                 background:linear-gradient(135deg,#3a2a10,#5a3a15);
+                 box-shadow:0 2px 8px rgba(0,0,0,.4)}
+.item .icon-wrap.thumb{background:#0d0d0d;overflow:hidden;padding:0}
+.item .icon{width:52px;height:52px;object-fit:contain;
+            filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
+.item .icon-wrap.thumb .icon.preview{width:100%;height:100%;
+                                     object-fit:cover;border-radius:12px;
+                                     filter:none}
+.item .name{font-size:13px;text-align:center;color:#eee;word-break:break-word;
+            overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;
+            -webkit-box-orient:vertical;max-width:100%}
+.item .size{font-size:11px;color:#777;margin-top:4px;
+            font-variant-numeric:tabular-nums}
+.item a.cover{position:absolute;inset:0;z-index:1}
+.item .del{position:absolute;top:6px;right:6px;z-index:2;
+           background:#2a1212;color:#e77;border-radius:6px;
+           padding:3px 7px;font-size:12px;opacity:0;transition:.15s;
+           display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.item .del img{width:12px;height:12px}
+.item:hover .del{opacity:1}
+.item .del:hover{background:#4a1515;color:#fff;text-decoration:none}
+form.up{margin:0;display:flex;gap:10px;align-items:center;
+        padding:8px 12px;background:#1c1c1c;border-radius:8px}
+input[type=file]{color:#eee;font-size:13px;max-width:230px}
+button{background:#4af;border:0;color:#000;padding:7px 14px;
+       border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;
+       display:inline-flex;align-items:center;gap:6px}
+button:hover{background:#69f}
+button img{width:14px;height:14px}
+.empty{color:#666;font-style:italic;padding:40px 0;text-align:center}
+.errors{background:#2a1010;border:1px solid #5a1a1a;border-radius:8px;
+        padding:14px 18px;margin-bottom:20px;color:#fbb;font-size:13px}
+.errors h3{margin:0 0 8px 0;color:#f77;font-size:14px;
+           display:flex;align-items:center;gap:8px}
+.errors h3 img{width:16px;height:16px}
+.errors pre{margin:4px 0;white-space:pre-wrap;word-break:break-word;
+            font-family:monospace;font-size:12px;color:#faa}
+.errors .clear{float:right;background:#4a1515;color:#fbb;border:0;
+               padding:3px 10px;border-radius:5px;cursor:pointer;font-size:12px}
+.errors .clear:hover{background:#5a1a1a}
+.dropzone{position:fixed;inset:0;background:rgba(0,0,0,.75);
+          display:none;align-items:center;justify-content:center;
+          z-index:1000;pointer-events:none}
+.dropzone.active{display:flex}
+.dropzone .inner{border:3px dashed #fa0;border-radius:20px;
+                 padding:60px 80px;color:#fa0;font-size:24px;
+                 font-weight:700;text-align:center;background:rgba(30,20,5,.9)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);
+         display:none;align-items:center;justify-content:center;
+         z-index:2000;flex-direction:column;gap:20px}
+.overlay.active{display:flex}
+.spinner{width:64px;height:64px;border:6px solid #333;
+         border-top-color:#fa0;border-radius:50%;
+         animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.overlay .text{color:#fa0;font-size:18px;font-weight:600}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.8);
+       display:none;align-items:center;justify-content:center;z-index:3000}
+.modal.active{display:flex}
+.modal .box{background:#1c1c1c;border:1px solid #333;border-radius:14px;
+            padding:28px 32px;max-width:360px;width:90%;text-align:center}
+.modal .box p{font-size:16px;margin:0 0 20px 0;color:#eee}
+.modal .box .name{color:#fa0;font-weight:700;word-break:break-all}
+.modal .box .btns{display:flex;gap:12px;justify-content:center}
+.modal .box button{padding:10px 24px;font-size:14px;border-radius:8px}
+.modal .box .yes{background:#c33;color:#fff}
+.modal .box .yes:hover{background:#e44}
+.modal .box .no{background:#333;color:#eee}
+.modal .box .no:hover{background:#444}
+</style></head><body>
+
+<div class="topbar">
+  <div></div>
+  <a class="lang-btn" href="?lang={{ other_lang }}">
+    <img src="/media/lang.png" onerror="this.style.display='none'">
+    {{ t.lang_switch }}
+  </a>
+</div>
+
+{% if errors %}
+<div class="errors">
+  <a class="clear" href="{{ url_for('clear_err') }}">{{ t.clear }}</a>
+  <h3>
+    <img src="/media/error.png" onerror="this.style.display='none'">
+    {{ t.errors }} ({{ errors|length }})
+  </h3>
+  {% for e in errors %}<pre>{{ e }}</pre>{% endfor %}
+</div>
+{% endif %}
+
+<div class="crumbs">
+  <a href="/">
+    <img src="/media/home.png" onerror="this.style.display='none'">
+    {{ t.root }}
+  </a>
+  {% for c in crumbs %}
+    <span class="sep">›</span>
+    <a href="/browse/{{ c.rel }}">
+      <img src="/media/folder.png" onerror="this.style.display='none'">
+      {{ c.name }}
+    </a>
+  {% endfor %}
+</div>
+
+<div class="toolbar">
+  {% if path and path != "/" %}
+    <a class="up" href="/browse/{{ parent }}">
+      <img src="/media/up.png" onerror="this.style.display='none'">
+      {{ t.up }}
+    </a>
+  {% else %}
+    <a class="up" href="/">
+      <img src="/media/up.png" onerror="this.style.display='none'">
+      {{ t.up }}
+    </a>
+  {% endif %}
+  <form class="up" method="post" action="{{ url_for('upload', path=path) }}"
+        enctype="multipart/form-data" id="uploadForm">
+    <input type="file" name="file" multiple required id="fileInput">
+    <button type="submit">
+      <img src="/media/upload.png" onerror="this.style.display='none'">
+      {{ t.upload }}
+    </button>
+  </form>
+</div>
+
+{% if entries %}
+<div class="grid">
+  {% for e in entries %}
+  <div class="item">
+    <a class="cover" href="{{ e.url }}"></a>
+    <div class="icon-wrap{% if e.is_img %} thumb{% endif %}">
+      {% if e.is_img %}
+        <img class="icon preview" src="{{ e.url }}" alt=""
+             loading="lazy"
+             onerror="this.parentNode.classList.remove('thumb');this.parentNode.innerHTML='<img class=\'icon\' src=\'/media/{{ e.icon }}\'>'">
+      {% else %}
+        <img class="icon" src="/media/{{ e.icon }}" alt=""
+             onerror="this.replaceWith(document.createTextNode('{{ e.fallback }}'))">
+      {% endif %}
+    </div>
+    <div class="name" title="{{ e.name }}">{{ e.name }}</div>
+    {% if e.size %}<div class="size">{{ e.size }}</div>{% endif %}
+    <a class="del" data-url="{{ e.delete_url }}" data-name="{{ e.name }}">
+      <img src="/media/trash.png" onerror="this.style.display='none'">
+      X
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">{{ t.empty }}</div>
+{% endif %}
+
+<div class="dropzone" id="dropzone">
+  <div class="inner">{{ t.upload }}</div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="spinner"></div>
+  <div class="text" id="overlayText">{{ t.upload }}...</div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <p>{{ t.delete_confirm }}<br><span class="name" id="modalName"></span></p>
+    <div class="btns">
+      <button class="yes" id="modalYes">{{ t.yes }}</button>
+      <button class="no" id="modalNo">{{ t.no }}</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var dropzone = document.getElementById('dropzone');
+  var overlay = document.getElementById('overlay');
+  var overlayText = document.getElementById('overlayText');
+  var uploadForm = document.getElementById('uploadForm');
+  var fileInput = document.getElementById('fileInput');
+  var dragCounter = 0;
+
+  document.addEventListener('dragenter', function(e){
+    e.preventDefault();
+    dragCounter++;
+    if(dragCounter === 1) dropzone.classList.add('active');
+  });
+  document.addEventListener('dragleave', function(e){
+    e.preventDefault();
+    dragCounter--;
+    if(dragCounter <= 0){ dragCounter = 0; dropzone.classList.remove('active'); }
+  });
+  document.addEventListener('dragover', function(e){
+    e.preventDefault();
+  });
+  document.addEventListener('drop', function(e){
+    e.preventDefault();
+    dragCounter = 0;
+    dropzone.classList.remove('active');
+    var files = e.dataTransfer.files;
+    if(!files || files.length === 0) return;
+    var fd = new FormData();
+    for(var i=0;i<files.length;i++) fd.append('file', files[i]);
+    overlayText.textContent = '{{ t.upload }} ' + files.length + '...';
+    overlay.classList.add('active');
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '{{ url_for("upload", path=path) }}', true);
+    xhr.onload = function(){
+      overlay.classList.remove('active');
+      if(xhr.status >= 200 && xhr.status < 400){
+        window.location.reload();
+      } else {
+        alert('Error: ' + xhr.status);
+      }
+    };
+    xhr.onerror = function(){
+      overlay.classList.remove('active');
+      alert('Network error');
+    };
+    xhr.send(fd);
+  });
+
+  uploadForm.addEventListener('submit', function(){
+    if(fileInput.files && fileInput.files.length > 1){
+      overlayText.textContent = '{{ t.upload }} ' + fileInput.files.length + '...';
+      overlay.classList.add('active');
+    }
+  });
+
+  var modal = document.getElementById('modal');
+  var modalName = document.getElementById('modalName');
+  var modalYes = document.getElementById('modalYes');
+  var modalNo = document.getElementById('modalNo');
+  var pendingUrl = null;
+
+  document.querySelectorAll('.item .del').forEach(function(el){
+    el.addEventListener('click', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      pendingUrl = el.getAttribute('data-url');
+      modalName.textContent = el.getAttribute('data-name');
+      modal.classList.add('active');
+    });
+  });
+
+  modalNo.addEventListener('click', function(){
+    modal.classList.remove('active');
+    pendingUrl = null;
+  });
+
+  modalYes.addEventListener('click', function(){
+    modal.classList.remove('active');
+    if(pendingUrl){ window.location.href = pendingUrl; }
+    pendingUrl = null;
+  });
+
+  modal.addEventListener('click', function(e){
+    if(e.target === modal){ modal.classList.remove('active'); pendingUrl = null; }
+  });
+})();
+</script>
+
+</body></html>

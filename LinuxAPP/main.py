@@ -8,6 +8,7 @@ import mouse
 import keyboard
 import gamepad
 import app_connect
+import webftp
 
 
 class ports:
@@ -17,7 +18,8 @@ class ports:
     KEYBOARD_PORT = 42001  # на нем клавиатура
     GAMEPAD_PORT = 42002  # на нем геймпад
     SSH_PORT = 42003  # на нем ssh
-    FTP_PORT = 42004  # на нем ftp
+    FTP_PORT_PC = 42004  # на нем ftp
+    FTP_PORT_PHONE = 42005  # на нем ftp
 
 
 class Application:
@@ -25,7 +27,9 @@ class Application:
         self.app = app
         self.mouse_thread = None
         self.keyboard_thread = None
+        self.gamepad_thread = None
         self.window = SettingsWindow(on_quit=self.quit)
+        self.window.on_setting_changed = self.on_setting_changed
 
     def start_mouse(self):
         self.mouse_thread = threading.Thread(target=mouse.main, daemon=True)
@@ -45,19 +49,44 @@ class Application:
     def stop_server(self):
         app_connect.stop_all(timeout=3)
 
+    def on_setting_changed(self, key, value):
+        if key == "ftp_server":
+            if value:
+                try:
+                    webftp.start_server(webftp.FTP_PORT_PC)
+                    print(f"[webftp] запущен: {webftp.get_url()}")
+                except Exception as e:
+                    print(f"[webftp] start error: {e}")
+            else:
+                try:
+                    webftp.stop_server(timeout=3)
+                    print("[webftp] остановлен")
+                except Exception as e:
+                    print(f"[webftp] stop error: {e}")
+
     def run(self):
         self.start_settings_server()
         self.start_mouse()
         self.start_keyboard()
         self.start_gamepad()
+        if self.window.settings.get("ftp_server"):
+            self.on_setting_changed("ftp_server", True)
         self.window.show()
         exit_code = self.app.exec_()
         self.stop_server()
+        try:
+            webftp.stop_server(timeout=3)
+        except Exception:
+            pass
         sys.exit(exit_code)
 
     def quit(self):
         self.window.save_settings()
         self.stop_server()
+        try:
+            webftp.stop_server(timeout=3)
+        except Exception:
+            pass
         self.app.quit()
 
 

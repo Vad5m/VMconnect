@@ -4,10 +4,14 @@ import threading
 import time
 import subprocess
 import getpass
+import webbrowser
 
 DISCOVERY_PORT = 42420
 SERVICE_PORT = 42042
 PORTS = [(DISCOVERY_PORT, 'udp'), (SERVICE_PORT, 'tcp')]
+
+PORT_RANGE_START = 42000
+PORT_RANGE_END = 42100
 
 
 def ufw_rule_exists(port, proto):
@@ -44,6 +48,31 @@ def ensure_ports(ports):
             print(f"[err] {port}/{proto}: {r.stderr.strip()}")
             return False
         print(f"[ok] открыт {port}/{proto}")
+    return True
+
+
+def ensure_port_range(start, end, proto='tcp'):
+    r = subprocess.run(['sudo', '-n', 'ufw', 'status'],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        all_open = True
+        for p in range(start, end + 1):
+            if f'{p}/{proto}' not in r.stdout:
+                all_open = False
+                break
+        if all_open:
+            print(f"[ok] {start}:{end}/{proto} уже разрешён")
+            return True
+
+    password = getpass.getpass("sudo пароль (для ufw): ")
+    r = subprocess.run(
+        ['sudo', '-S', 'ufw', 'allow', f'{start}:{end}/{proto}'],
+        input=password + '\n', text=True, capture_output=True
+    )
+    if r.returncode != 0:
+        print(f"[err] {start}:{end}/{proto}: {r.stderr.strip()}")
+        return False
+    print(f"[ok] открыт диапазон {start}:{end}/{proto}")
     return True
 
 
@@ -95,6 +124,23 @@ def broadcast(settings: dict | None = None):
     payload = bus.get()
     if _SettingsServer.instance is not None:
         _SettingsServer.instance.send_to_all(payload)
+
+
+def open_url(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
+    url = url.strip()
+    if not url:
+        return False
+    if not (url.startswith('http://') or url.startswith('https://')):
+        url = 'http://' + url
+    try:
+        webbrowser.open(url)
+        print(f"[app_connect] открываю ссылку: {url}")
+        return True
+    except Exception as e:
+        print(f"[app_connect] ошибка открытия ссылки: {e}")
+        return False
 
 
 class _SettingsServer:
@@ -223,17 +269,30 @@ class _SettingsServer:
         print("[app_connect] остановлен")
 
     def _client_reader(self, client: socket.socket, addr):
+        buffer = b""
         try:
             client.settimeout(1.0)
             while not self._stop_event.is_set():
                 try:
-                    data = client.recv(1024)
+                    data = client.recv(4096)
                 except socket.timeout:
                     continue
                 except OSError:
                     break
                 if not data:
                     break
+
+                buffer += data
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line.decode("utf-8"))
+                    except Exception:
+                        continue
+                    self._handle_client_message(msg)
         finally:
             with self._clients_lock:
                 self._clients.discard(client)
@@ -242,6 +301,14 @@ class _SettingsServer:
             except OSError:
                 pass
             print(f"[app_connect] клиент отключился: {addr}")
+
+    def _handle_client_message(self, msg):
+        if not isinstance(msg, dict):
+            return
+        action = msg.get("action")
+        if action == "open_url":
+            url = msg.get("url", "")
+            open_url(url)
 
 
 _server = None
@@ -270,6 +337,12 @@ def start_all():
 
     if _started:
         return
+
+    if not ensure_port_range(PORT_RANGE_START, PORT_RANGE_END, 'tcp'):
+        raise SystemExit("Не удалось открыть диапазон TCP портов")
+
+    if not ensure_port_range(PORT_RANGE_START, PORT_RANGE_END, 'udp'):
+        raise SystemExit("Не удалось открыть диапазон UDP портов")
 
     if not ensure_ports(PORTS):
         raise SystemExit("Не удалось открыть порты")

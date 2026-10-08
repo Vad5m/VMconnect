@@ -233,3 +233,10 @@ class SettingsWindow(QMainWindow):
         self.save_settings()
 
         app_connect.broadcast(self.settings)
+
+        cb = getattr(self, "on_setting_changed", None)
+        if cb is not None:
+            try:
+                cb(key, checked)
+            except Exception as e:
+                print(f"[gui] on_setting_changed error: {e}")

@@ -4,6 +4,7 @@ import socket
 import threading
 import traceback
 import time
+import json as _json
 from pathlib import Path
 
 from kivy.app import App
@@ -28,6 +29,7 @@ from flask import (
 
 FTP_PORT_PC = 42004
 FTP_PORT_PHONE = 42005
+MAIN_PORT = 42042
 DEFAULT_HOST = "192.168.1.42"
 
 _server_host = None
@@ -664,8 +666,25 @@ class FtpServerRoot(BoxLayout):
         except Exception as e:
             Logger.error(f"ftp_server open url {url}: {e}")
 
+    def _send_open_to_server(self, url):
+        try:
+            host = _server_host or DEFAULT_HOST
+            with socket.create_connection((host, MAIN_PORT), timeout=3) as s:
+                buf = b""
+                while b"\n" not in buf:
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+
+                cmd = {"action": "open_url", "url": url}
+                s.sendall((_json.dumps(cmd) + "\n").encode("utf-8"))
+            Logger.info(f"ftp_server: open_url -> {host}:{MAIN_PORT} {url}")
+        except Exception as e:
+            Logger.error(f"ftp_server open_url error: {e}")
+
     def open_phone(self):
-        self._open_url(self.url_phone)
+        self._send_open_to_server(self.url_phone)
 
     def open_pc(self):
         self._open_url(self.url_pc)

@@ -24,6 +24,8 @@ import keyboard as keyboard_module
 from keyboard import DEFAULT_HOST as KB_DEFAULT_HOST, DEFAULT_PORT as KB_DEFAULT_PORT
 import gamepad as gamepad_module
 from gamepad import DEFAULT_HOST as GP_DEFAULT_HOST, DEFAULT_PORT as GP_DEFAULT_PORT
+import ssh as ssh_module
+from ssh import DEFAULT_HOST as SSH_DEFAULT_HOST, DEFAULT_PORT as SSH_DEFAULT_PORT
 import ftp_server as ftp_server_module
 
 
@@ -108,6 +110,10 @@ class FeatureButton(ButtonBehavior, BoxLayout):
             app.open_gamepad()
             return
 
+        if self.text == "ssh":
+            app.open_ssh()
+            return
+
         if self.text == "ftp_server":
             app.open_ftp_server()
             return
@@ -165,6 +171,8 @@ class mykivy(App):
                 if sm.has_screen("gamepad"):
                     gamepad_module.stop_gamepad_screen(
                         sm.get_screen("gamepad"))
+                if sm.has_screen("ssh"):
+                    ssh_module.stop_ssh_screen(sm.get_screen("ssh"))
                 if sm.has_screen("ftp_server"):
                     ftp_server_module.stop_ftp_server_screen(
                         sm.get_screen("ftp_server"))
@@ -257,6 +265,20 @@ class mykivy(App):
 
         sm.current = "gamepad"
 
+    def open_ssh(self):
+        if not self.server_ip:
+            print("ssh: server_ip ещё не найден")
+            return
+
+        ssh_module.set_server(self.server_ip, SSH_DEFAULT_PORT)
+
+        sm: ScreenManager = self.root
+        if not sm.has_screen("ssh"):
+            scr = ssh_module.create_ssh_screen("ssh")
+            sm.add_widget(scr)
+
+        sm.current = "ssh"
+
     def open_ftp_server(self):
         sm: ScreenManager = self.root
         if not sm.has_screen("ftp_server"):
@@ -275,6 +297,7 @@ class mykivy(App):
             mouse_module.set_server(ip, DEFAULT_PORT)
             keyboard_module.set_server(ip, KB_DEFAULT_PORT)
             gamepad_module.set_server(ip, GP_DEFAULT_PORT)
+            ssh_module.set_server(ip, SSH_DEFAULT_PORT)
             ftp_server_module.set_server(ip)
             self.host = ip
             main.ids.status.text = f"Найден сервер: {ip}"
@@ -342,6 +365,7 @@ class mykivy(App):
             mouse_module.set_server(host, self.port)
             keyboard_module.set_server(host, KB_DEFAULT_HOST and KB_DEFAULT_PORT)
             gamepad_module.set_server(host, GP_DEFAULT_PORT)
+            ssh_module.set_server(host, SSH_DEFAULT_PORT)
             ftp_server_module.set_server(host)
         except Exception as e:
             print(f"on_ip_changed: {e}")

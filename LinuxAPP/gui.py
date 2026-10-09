@@ -10,6 +10,7 @@ from tray import TrayIcon
 
 import mouse
 import keyboard
+import ssh
 import app_connect
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
@@ -121,6 +122,7 @@ class SettingsWindow(QMainWindow):
 
         self.apply_mouse_state(self.toggles["mouse"].isChecked())
         self.apply_keyboard_state(self.toggles["keyboard"].isChecked())
+        self.apply_ssh_state(self.toggles["ssh"].isChecked())
 
         self.tray_icon = TrayIcon(self)
         self.tray_icon.on_show = self.show_window
@@ -182,6 +184,15 @@ class SettingsWindow(QMainWindow):
         except Exception as e:
             print(f"[keyboard] не удалось применить состояние ({enabled}): {e}")
 
+    def apply_ssh_state(self, enabled: bool):
+        try:
+            if enabled:
+                ssh.start_server()
+            else:
+                ssh.stop_server(timeout=3)
+        except Exception as e:
+            print(f"[ssh] не удалось применить состояние ({enabled}): {e}")
+
     def load_settings(self):
         default_settings = {
             "mouse": False,
@@ -229,6 +240,8 @@ class SettingsWindow(QMainWindow):
             self.apply_mouse_state(checked)
         elif key == "keyboard":
             self.apply_keyboard_state(checked)
+        elif key == "ssh":
+            self.apply_ssh_state(checked)
 
         self.save_settings()
 

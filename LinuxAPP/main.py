@@ -7,19 +7,19 @@ from gui import SettingsWindow
 import mouse
 import keyboard
 import gamepad
+import ssh
 import app_connect
 import webftp
 
 
 class ports:
-    """Без этого класса я забуду на каком порте что."""
-    MAIN_PORT = 42042  # на нем основное приложение
-    MOUSE_PORT = 42000  # на нем мышь
-    KEYBOARD_PORT = 42001  # на нем клавиатура
-    GAMEPAD_PORT = 42002  # на нем геймпад
-    SSH_PORT = 42003  # на нем ssh
-    FTP_PORT_PC = 42004  # на нем ftp
-    FTP_PORT_PHONE = 42005  # на нем ftp
+    MAIN_PORT = 42042
+    MOUSE_PORT = 42000
+    KEYBOARD_PORT = 42001
+    GAMEPAD_PORT = 42002
+    SSH_PORT = 42003
+    FTP_PORT_PC = 42004
+    FTP_PORT_PHONE = 42005
 
 
 class Application:
@@ -75,6 +75,10 @@ class Application:
         exit_code = self.app.exec_()
         self.stop_server()
         try:
+            ssh.stop_server(timeout=2)
+        except Exception:
+            pass
+        try:
             webftp.stop_server(timeout=3)
         except Exception:
             pass
@@ -83,6 +87,10 @@ class Application:
     def quit(self):
         self.window.save_settings()
         self.stop_server()
+        try:
+            ssh.stop_server(timeout=2)
+        except Exception:
+            pass
         try:
             webftp.stop_server(timeout=3)
         except Exception:

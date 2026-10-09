@@ -5,6 +5,7 @@ import time
 import subprocess
 import getpass
 import webbrowser
+import os
 
 DISCOVERY_PORT = 42420
 SERVICE_PORT = 42042
@@ -13,13 +14,68 @@ PORTS = [(DISCOVERY_PORT, 'udp'), (SERVICE_PORT, 'tcp')]
 PORT_RANGE_START = 42000
 PORT_RANGE_END = 42100
 
+PASSWORD_FILE = os.path.expanduser('~/.app_connect_sudo_pass')
+
+_SUDO_PASSWORD = None
+
+
+def _load_password():
+    global _SUDO_PASSWORD
+    if _SUDO_PASSWORD is not None:
+        return _SUDO_PASSWORD
+    if os.path.exists(PASSWORD_FILE):
+        try:
+            with open(PASSWORD_FILE, 'r') as f:
+                pwd = f.read().strip()
+            if pwd:
+                _SUDO_PASSWORD = pwd
+                return _SUDO_PASSWORD
+        except Exception:
+            pass
+    pwd = getpass.getpass("sudo пароль (для ufw): ")
+    _SUDO_PASSWORD = pwd
+    try:
+        with open(PASSWORD_FILE, 'w') as f:
+            f.write(pwd)
+        os.chmod(PASSWORD_FILE, 0o600)
+    except Exception as e:
+        print(f"[warn] не удалось сохранить пароль: {e}")
+    return _SUDO_PASSWORD
+
+
+def _sudo_run(args, use_password=False):
+    if use_password:
+        password = _load_password()
+        return subprocess.run(
+            ['sudo', '-S'] + args,
+            input=password + '\n', text=True, capture_output=True
+        )
+    return subprocess.run(
+        ['sudo', '-n'] + args,
+        text=True, capture_output=True
+    )
+
+
+def _ufw_status():
+    r = _sudo_run(['ufw', 'status'], use_password=False)
+    if r.returncode == 0:
+        return r
+    r = _sudo_run(['ufw', 'status'], use_password=True)
+    return r
+
 
 def ufw_rule_exists(port, proto):
-    r = subprocess.run(['sudo', '-n', 'ufw', 'status'],
-                       capture_output=True, text=True)
+    r = _ufw_status()
     if r.returncode != 0:
         return None
     return f'{port}/{proto}' in r.stdout
+
+
+def _ufw_allow(rule):
+    r = _sudo_run(['ufw', 'allow', rule], use_password=False)
+    if r.returncode == 0:
+        return r
+    return _sudo_run(['ufw', 'allow', rule], use_password=True)
 
 
 def ensure_ports(ports):
@@ -38,12 +94,8 @@ def ensure_ports(ports):
     if not need:
         return True
 
-    password = getpass.getpass("sudo пароль (для ufw): ")
     for port, proto in need:
-        r = subprocess.run(
-            ['sudo', '-S', 'ufw', 'allow', f'{port}/{proto}'],
-            input=password + '\n', text=True, capture_output=True
-        )
+        r = _ufw_allow(f'{port}/{proto}')
         if r.returncode != 0:
             print(f"[err] {port}/{proto}: {r.stderr.strip()}")
             return False
@@ -52,8 +104,7 @@ def ensure_ports(ports):
 
 
 def ensure_port_range(start, end, proto='tcp'):
-    r = subprocess.run(['sudo', '-n', 'ufw', 'status'],
-                       capture_output=True, text=True)
+    r = _ufw_status()
     if r.returncode == 0:
         all_open = True
         for p in range(start, end + 1):
@@ -64,11 +115,7 @@ def ensure_port_range(start, end, proto='tcp'):
             print(f"[ok] {start}:{end}/{proto} уже разрешён")
             return True
 
-    password = getpass.getpass("sudo пароль (для ufw): ")
-    r = subprocess.run(
-        ['sudo', '-S', 'ufw', 'allow', f'{start}:{end}/{proto}'],
-        input=password + '\n', text=True, capture_output=True
-    )
+    r = _ufw_allow(f'{start}:{end}/{proto}')
     if r.returncode != 0:
         print(f"[err] {start}:{end}/{proto}: {r.stderr.strip()}")
         return False
@@ -245,7 +292,7 @@ class _SettingsServer:
                 snapshot = bus.get()
                 payload = (json.dumps(snapshot, ensure_ascii=False) + "\n").encode("utf-8")
                 client.sendall(payload)
-            except OSError as e:
+            except OSError:
                 with self._clients_lock:
                     self._clients.discard(client)
                 try:

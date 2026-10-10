@@ -147,6 +147,7 @@ class mykivy(App):
         self.sock = None
         self.buttons = {}
         self._loaded_kv = set()
+        self._discovering = False
 
     def build(self):
         self.title = "Поиск устройства"
@@ -157,9 +158,10 @@ class mykivy(App):
     def on_start(self):
         request_android_permissions()
         Window.bind(on_keyboard=self._on_keyboard)
-        Thread(target=self._discover, daemon=True).start()
+        self._start_discovery()
 
     def on_stop(self):
+        self._discovering = False
         try:
             sm = self.root
             if sm is not None:
@@ -286,13 +288,29 @@ class mykivy(App):
             sm.add_widget(scr)
         sm.current = "ftp_server"
 
+    def _start_discovery(self):
+        self._discovering = True
+        Thread(target=self._discover, daemon=True).start()
+
     def _discover(self):
-        ip = find_server()
-        Clock.schedule_once(lambda dt: self._on_found(ip))
+        while self._discovering:
+            ip = find_server()
+            Clock.schedule_once(lambda dt, ip=ip: self._on_found(ip))
+            if ip:
+                break
+            else:
+                Clock.schedule_once(
+                    lambda dt: setattr(
+                        self.root.get_screen("main").ids.status,
+                        "text",
+                        "Поиск сервера..."
+                    )
+                )
 
     def _on_found(self, ip):
         main = self.root.get_screen("main")
         if ip:
+            self._discovering = False
             self.server_ip = ip
             mouse_module.set_server(ip, DEFAULT_PORT)
             keyboard_module.set_server(ip, KB_DEFAULT_PORT)
@@ -304,7 +322,7 @@ class mykivy(App):
             print(f"IP сервера сохранён: {self.server_ip}")
             Thread(target=self._listen_server, daemon=True).start()
         else:
-            main.ids.status.text = "Сервер не найден"
+            main.ids.status.text = "Поиск сервера..."
 
     def _listen_server(self):
         try:

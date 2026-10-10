@@ -1,504 +1,442 @@
-import os
-import time
-import socket
-import warnings
-from threading import Thread, Lock
-from collections import deque
+import json
+import queue
+import threading
+import urllib.request
+from os.path import exists
+
+from kivy.app import App
+from kivy.clock import Clock
+from kivy.lang import Builder
+from kivy.logger import Logger
+from kivy.metrics import dp
+from kivy.properties import StringProperty
+from kivy.uix.anchorlayout import AnchorLayout
+from kivy.uix.behaviors import ButtonBehavior
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.image import Image
+from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.screenmanager import Screen
+from kivy.uix.widget import Widget
+from kivy.core.window import Window
 
 
-warnings.filterwarnings('ignore')
+DEFAULT_HOST = "192.168.1.42"
+DEFAULT_PORT = 42001
+API_PREFIX = '/keyboard'
 
-try:
-    import uinput
-    UINPUT_AVAILABLE = True
-except ImportError:
-    UINPUT_AVAILABLE = False
-    uinput = None
-
-from flask import Flask, request, jsonify
-from werkzeug.serving import WSGIRequestHandler
-
-KEYBOARD_ENABLED = True
-
-device = None
-keyboard_lock = Lock()
-event_queue = deque(maxlen=2000)
-_worker_started = False
-_current_layout = None  # 'en' | 'ru' | None
+CURRENT_HOST = DEFAULT_HOST
+CURRENT_PORT = DEFAULT_PORT
 
 
-# ============================================================
-#  Управление модулем
-# ============================================================
-
-def enable():
-    global KEYBOARD_ENABLED
-    KEYBOARD_ENABLED = True
-    return KEYBOARD_ENABLED
+def set_server(host, port=DEFAULT_PORT):
+    global CURRENT_HOST, CURRENT_PORT
+    CURRENT_HOST = host or DEFAULT_HOST
+    CURRENT_PORT = port
+    Logger.info(f'keyboard: server set to {CURRENT_HOST}:{CURRENT_PORT}')
 
 
-def disable():
-    global KEYBOARD_ENABLED
-    KEYBOARD_ENABLED = False
-    return KEYBOARD_ENABLED
+def _base_url():
+    return f'http://{CURRENT_HOST}:{CURRENT_PORT}{API_PREFIX}'
 
 
-# ============================================================
-#  Инициализация uinput
-# ============================================================
-
-KEY_EVENTS = (
-    uinput.KEY_A, uinput.KEY_B, uinput.KEY_C, uinput.KEY_D,
-    uinput.KEY_E, uinput.KEY_F, uinput.KEY_G, uinput.KEY_H,
-    uinput.KEY_I, uinput.KEY_J, uinput.KEY_K, uinput.KEY_L,
-    uinput.KEY_M, uinput.KEY_N, uinput.KEY_O, uinput.KEY_P,
-    uinput.KEY_Q, uinput.KEY_R, uinput.KEY_S, uinput.KEY_T,
-    uinput.KEY_U, uinput.KEY_V, uinput.KEY_W, uinput.KEY_X,
-    uinput.KEY_Y, uinput.KEY_Z,
-    uinput.KEY_1, uinput.KEY_2, uinput.KEY_3, uinput.KEY_4,
-    uinput.KEY_5, uinput.KEY_6, uinput.KEY_7, uinput.KEY_8,
-    uinput.KEY_9, uinput.KEY_0,
-    uinput.KEY_ENTER, uinput.KEY_BACKSPACE, uinput.KEY_TAB,
-    uinput.KEY_LEFTMETA, uinput.KEY_RIGHTMETA,
-    uinput.KEY_LEFTALT, uinput.KEY_RIGHTALT,
-    uinput.KEY_LEFTCTRL, uinput.KEY_RIGHTCTRL,
-    uinput.KEY_SPACE,
-    uinput.KEY_LEFTSHIFT, uinput.KEY_RIGHTSHIFT,
-    uinput.KEY_DOT, uinput.KEY_COMMA,
-    uinput.KEY_MINUS, uinput.KEY_EQUAL, uinput.KEY_SLASH,
-    uinput.KEY_SEMICOLON, uinput.KEY_APOSTROPHE,
-    uinput.KEY_LEFTBRACE, uinput.KEY_RIGHTBRACE,
-    uinput.KEY_GRAVE, uinput.KEY_BACKSLASH,
-    uinput.KEY_ESC, uinput.KEY_DELETE, uinput.KEY_INSERT,
-    uinput.KEY_HOME, uinput.KEY_END, uinput.KEY_PAGEUP, uinput.KEY_PAGEDOWN,
-    uinput.KEY_UP, uinput.KEY_DOWN, uinput.KEY_LEFT, uinput.KEY_RIGHT,
-    uinput.KEY_CAPSLOCK, uinput.KEY_F1, uinput.KEY_F2, uinput.KEY_F3,
-    uinput.KEY_F4, uinput.KEY_F5, uinput.KEY_F6, uinput.KEY_F7,
-    uinput.KEY_F8, uinput.KEY_F9, uinput.KEY_F10, uinput.KEY_F11, uinput.KEY_F12,
-)
-
-
-def init_uinput():
-    global device
-    if not UINPUT_AVAILABLE:
-        return False
-    try:
-        if not os.path.exists('/dev/uinput'):
-            return False
-        if not os.access('/dev/uinput', os.W_OK):
-            return False
-        device = uinput.Device(KEY_EVENTS)
-        time.sleep(1)  # даём ядру поднять устройство
-        return True
-    except Exception:
-        return False
-
-
-def is_available():
-    return device is not None
-
-
-# ============================================================
-#  Очередь событий + воркер
-# ============================================================
-
-def _enqueue(kind, **kwargs):
-    """kind: 'click' | 'combo' | 'press' | 'release'"""
-    if not device:
-        return
-    with keyboard_lock:
-        event_queue.append((kind, kwargs))
-
-
-def _worker():
-    global device
-    while True:
+def show_error(message, title='Error', duration=3.0):
+    def _show(dt):
         try:
-            if not device:
-                time.sleep(0.1)
+            popup = Popup(
+                title=title,
+                content=Label(text=str(message)[:500], halign='center',
+                              valign='middle'),
+                size_hint=(0.85, 0.4),
+                auto_dismiss=True,
+            )
+            popup.content.bind(size=lambda w, s: setattr(w, 'text_size', s))
+            popup.open()
+            if duration:
+                Clock.schedule_once(lambda _dt: popup.dismiss(), duration)
+        except Exception as e:
+            Logger.error(f'show_error failed: {e}')
+
+    Clock.schedule_once(_show, 0)
+
+
+class HttpSender:
+    def __init__(self, base_url_provider=None, on_error=None,
+                 on_layout=None):
+        self._base_url_provider = base_url_provider or _base_url
+        self._on_error = on_error
+        self._on_layout = on_layout
+        self._queue = queue.Queue(maxsize=256)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def send(self, endpoint, payload):
+        try:
+            self._queue.put_nowait((endpoint, payload))
+        except queue.Full:
+            try:
+                self._queue.get_nowait()
+                self._queue.put_nowait((endpoint, payload))
+            except (queue.Empty, queue.Full):
+                pass
+
+    def fetch_layout(self):
+        try:
+            url = self._base_url_provider() + '/layout'
+            req = urllib.request.Request(url, method='GET')
+            with urllib.request.urlopen(req, timeout=1.5) as r:
+                data = json.loads(r.read().decode('utf-8'))
+            layout = data.get('layout')
+            if self._on_layout:
+                Clock.schedule_once(
+                    lambda dt: self._on_layout(layout), 0)
+        except Exception as e:
+            Logger.warning(f'fetch_layout: {e}')
+            self._report(f'{type(e).__name__}: {e}')
+
+    def stop(self):
+        self._stop.set()
+        try:
+            self._queue.put_nowait((None, None))
+        except queue.Full:
+            pass
+
+    def _worker(self):
+        while not self._stop.is_set():
+            try:
+                endpoint, payload = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                Logger.error(f'HttpSender worker: {e}')
                 continue
 
-            with keyboard_lock:
-                if event_queue:
-                    kind, kw = event_queue.popleft()
-                else:
-                    kind, kw = None, None
+            if endpoint is None:
+                break
 
-            if kind is None:
-                time.sleep(0.001)
+            if endpoint == '/type':
+                text = payload.get('text', '')
+                while True:
+                    try:
+                        nxt_ep, nxt_pl = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if nxt_ep == '/type':
+                        text += nxt_pl.get('text', '')
+                    else:
+                        try:
+                            self._queue.put_nowait((nxt_ep, nxt_pl))
+                        except queue.Full:
+                            pass
+                        break
+                payload = {'text': text}
+
+            elif endpoint == '/backspace':
+                count = int(payload.get('count', 1))
+                while True:
+                    try:
+                        nxt_ep, nxt_pl = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if nxt_ep == '/backspace':
+                        count += int(nxt_pl.get('count', 1))
+                    else:
+                        try:
+                            self._queue.put_nowait((nxt_ep, nxt_pl))
+                        except queue.Full:
+                            pass
+                        break
+                payload = {'count': count}
+
+            try:
+                url = self._base_url_provider() + endpoint
+            except Exception as e:
+                self._report(f'bad base url: {e}')
                 continue
 
-            if kind == 'click':
-                device.emit_click(kw['key'])
-            elif kind == 'combo':
-                device.emit_combo(kw['keys'])
-            elif kind == 'press':
-                device.emit(kw['key'], 1)
-            elif kind == 'release':
-                device.emit(kw['key'], 0)
+            self._post(url, payload)
 
-            # небольшая пауза, чтобы ОС успевала обрабатывать
-            time.sleep(0.008)
+    def _post(self, url, payload):
+        try:
+            data = json.dumps(payload).encode('utf-8')
+            req = urllib.request.Request(
+                url, data=data,
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            urllib.request.urlopen(req, timeout=1.5)
+        except Exception as e:
+            Logger.warning(f'HttpSender: {url} -> {e}')
+            self._report(f'{type(e).__name__}: {e}')
+
+    def _report(self, msg):
+        if not self._on_error:
+            return
+        try:
+            Clock.schedule_once(lambda dt: self._on_error(msg), 0)
         except Exception:
-            time.sleep(0.1)
+            pass
 
 
-def start_worker():
-    global _worker_started
-    if _worker_started:
-        return
-    t = Thread(target=_worker, daemon=True)
-    t.start()
-    _worker_started = True
+class BackButton(ButtonBehavior, BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.size = (dp(48), dp(48))
+        self._build()
+
+    def _build(self):
+        self.clear_widgets()
+        img = Image(
+            source='data/icons/back.png',
+            size_hint=(1, 1),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5},
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        self.add_widget(img)
+
+    def on_state(self, *args):
+        pass
 
 
-# ============================================================
-#  Публичные функции ввода
-# ============================================================
+class RoundedButton(Widget):
+    bg_color = (0.23, 0.23, 0.24, 1)
+    pressed_color = (0.36, 0.36, 0.38, 1)
+    radius = dp(20)
+    state = StringProperty('normal')
 
-KEYMAP = {
-    'a': (uinput.KEY_A, False), 'b': (uinput.KEY_B, False),
-    'c': (uinput.KEY_C, False), 'd': (uinput.KEY_D, False),
-    'e': (uinput.KEY_E, False), 'f': (uinput.KEY_F, False),
-    'g': (uinput.KEY_G, False), 'h': (uinput.KEY_H, False),
-    'i': (uinput.KEY_I, False), 'j': (uinput.KEY_J, False),
-    'k': (uinput.KEY_K, False), 'l': (uinput.KEY_L, False),
-    'm': (uinput.KEY_M, False), 'n': (uinput.KEY_N, False),
-    'o': (uinput.KEY_O, False), 'p': (uinput.KEY_P, False),
-    'q': (uinput.KEY_Q, False), 'r': (uinput.KEY_R, False),
-    's': (uinput.KEY_S, False), 't': (uinput.KEY_T, False),
-    'u': (uinput.KEY_U, False), 'v': (uinput.KEY_V, False),
-    'w': (uinput.KEY_W, False), 'x': (uinput.KEY_X, False),
-    'y': (uinput.KEY_Y, False), 'z': (uinput.KEY_Z, False),
-    'A': (uinput.KEY_A, True),  'B': (uinput.KEY_B, True),
-    'C': (uinput.KEY_C, True),  'D': (uinput.KEY_D, True),
-    'E': (uinput.KEY_E, True),  'F': (uinput.KEY_F, True),
-    'G': (uinput.KEY_G, True),  'H': (uinput.KEY_H, True),
-    'I': (uinput.KEY_I, True),  'J': (uinput.KEY_J, True),
-    'K': (uinput.KEY_K, True),  'L': (uinput.KEY_L, True),
-    'M': (uinput.KEY_M, True),  'N': (uinput.KEY_N, True),
-    'O': (uinput.KEY_O, True),  'P': (uinput.KEY_P, True),
-    'Q': (uinput.KEY_Q, True),  'R': (uinput.KEY_R, True),
-    'S': (uinput.KEY_S, True),  'T': (uinput.KEY_T, True),
-    'U': (uinput.KEY_U, True),  'V': (uinput.KEY_V, True),
-    'W': (uinput.KEY_W, True),  'X': (uinput.KEY_X, True),
-    'Y': (uinput.KEY_Y, True),  'Z': (uinput.KEY_Z, True),
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._on_press_cb = None
+        self.bind(state=self._on_state)
 
-    '0': (uinput.KEY_0, False), '1': (uinput.KEY_1, False),
-    '2': (uinput.KEY_2, False), '3': (uinput.KEY_3, False),
-    '4': (uinput.KEY_4, False), '5': (uinput.KEY_5, False),
-    '6': (uinput.KEY_6, False), '7': (uinput.KEY_7, False),
-    '8': (uinput.KEY_8, False), '9': (uinput.KEY_9, False),
+    def _on_state(self, *args):
+        pass
 
-    ' ': (uinput.KEY_SPACE, False),
-    '.': (uinput.KEY_DOT, False),
-    ',': (uinput.KEY_COMMA, False),
-    '-': (uinput.KEY_MINUS, False),
-    '=': (uinput.KEY_EQUAL, False),
-    '/': (uinput.KEY_SLASH, False),
-    ';': (uinput.KEY_SEMICOLON, False),
-    "'": (uinput.KEY_APOSTROPHE, False),
-    '[': (uinput.KEY_LEFTBRACE, False),
-    ']': (uinput.KEY_RIGHTBRACE, False),
-    '`': (uinput.KEY_GRAVE, False),
-    '\\': (uinput.KEY_BACKSLASH, False),
-    '\n': (uinput.KEY_ENTER, False),
-    '\t': (uinput.KEY_TAB, False),
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            touch.grab(self)
+            self.state = 'down'
+            return True
+        return False
 
-    '!': (uinput.KEY_1, True),
-    '@': (uinput.KEY_2, True),
-    '#': (uinput.KEY_3, True),
-    '$': (uinput.KEY_4, True),
-    '%': (uinput.KEY_5, True),
-    '^': (uinput.KEY_6, True),
-    '&': (uinput.KEY_7, True),
-    '*': (uinput.KEY_8, True),
-    '(': (uinput.KEY_9, True),
-    ')': (uinput.KEY_0, True),
-    '_': (uinput.KEY_MINUS, True),
-    '+': (uinput.KEY_EQUAL, True),
-    ':': (uinput.KEY_SEMICOLON, True),
-    '"': (uinput.KEY_APOSTROPHE, True),
-    '{': (uinput.KEY_LEFTBRACE, True),
-    '}': (uinput.KEY_RIGHTBRACE, True),
-    '~': (uinput.KEY_GRAVE, True),
-    '|': (uinput.KEY_BACKSLASH, True),
-    '<': (uinput.KEY_COMMA, True),
-    '>': (uinput.KEY_DOT, True),
-    '?': (uinput.KEY_SLASH, True),
-
-    'й': (uinput.KEY_Q, False), 'ц': (uinput.KEY_W, False),
-    'у': (uinput.KEY_E, False), 'к': (uinput.KEY_R, False),
-    'е': (uinput.KEY_T, False), 'н': (uinput.KEY_Y, False),
-    'г': (uinput.KEY_U, False), 'ш': (uinput.KEY_I, False),
-    'щ': (uinput.KEY_O, False), 'з': (uinput.KEY_P, False),
-    'х': (uinput.KEY_LEFTBRACE, False), 'ъ': (uinput.KEY_RIGHTBRACE, False),
-    'ф': (uinput.KEY_A, False), 'ы': (uinput.KEY_S, False),
-    'в': (uinput.KEY_D, False), 'а': (uinput.KEY_F, False),
-    'п': (uinput.KEY_G, False), 'р': (uinput.KEY_H, False),
-    'о': (uinput.KEY_J, False), 'л': (uinput.KEY_K, False),
-    'д': (uinput.KEY_L, False), 'ж': (uinput.KEY_SEMICOLON, False),
-    'э': (uinput.KEY_APOSTROPHE, False),
-    'я': (uinput.KEY_Z, False), 'ч': (uinput.KEY_X, False),
-    'с': (uinput.KEY_C, False), 'м': (uinput.KEY_V, False),
-    'и': (uinput.KEY_B, False), 'т': (uinput.KEY_N, False),
-    'ь': (uinput.KEY_M, False), 'б': (uinput.KEY_COMMA, False),
-    'ю': (uinput.KEY_DOT, False), 'ё': (uinput.KEY_GRAVE, False),
-
-    'Й': (uinput.KEY_Q, True), 'Ц': (uinput.KEY_W, True),
-    'У': (uinput.KEY_E, True), 'К': (uinput.KEY_R, True),
-    'Е': (uinput.KEY_T, True), 'Н': (uinput.KEY_Y, True),
-    'Г': (uinput.KEY_U, True), 'Ш': (uinput.KEY_I, True),
-    'Щ': (uinput.KEY_O, True), 'З': (uinput.KEY_P, True),
-    'Х': (uinput.KEY_LEFTBRACE, True), 'Ъ': (uinput.KEY_RIGHTBRACE, True),
-    'Ф': (uinput.KEY_A, True), 'Ы': (uinput.KEY_S, True),
-    'В': (uinput.KEY_D, True), 'А': (uinput.KEY_F, True),
-    'П': (uinput.KEY_G, True), 'Р': (uinput.KEY_H, True),
-    'О': (uinput.KEY_J, True), 'Л': (uinput.KEY_K, True),
-    'Д': (uinput.KEY_L, True), 'Ж': (uinput.KEY_SEMICOLON, True),
-    'Э': (uinput.KEY_APOSTROPHE, True),
-    'Я': (uinput.KEY_Z, True), 'Ч': (uinput.KEY_X, True),
-    'С': (uinput.KEY_C, True), 'М': (uinput.KEY_V, True),
-    'И': (uinput.KEY_B, True), 'Т': (uinput.KEY_N, True),
-    'Ь': (uinput.KEY_M, True), 'Б': (uinput.KEY_COMMA, True),
-    'Ю': (uinput.KEY_DOT, True), 'Ё': (uinput.KEY_GRAVE, True),
-}
+    def on_touch_up(self, touch):
+        if touch.grab_current is self:
+            touch.ungrab(self)
+            self.state = 'normal'
+            if self.collide_point(*touch.pos) and self._on_press_cb:
+                try:
+                    self._on_press_cb()
+                except Exception as e:
+                    Logger.error(f'button press: {e}')
+                    show_error(str(e), title='Button error')
+            return True
+        return False
 
 
-def type_text(text):
-    """Ставит в очередь печать строки (без переключения раскладки)."""
-    if not device or not isinstance(text, str):
-        return 0
-    sent = 0
-    for ch in text:
-        if ch not in KEYMAP:
-            continue
-        key, need_shift = KEYMAP[ch]
-        if need_shift:
-            _enqueue('combo', keys=[uinput.KEY_LEFTSHIFT, key])
+class RoundedTextInput(AnchorLayout):
+    text = StringProperty('')
+    hint_text = StringProperty('')
+    input_filter = None
+    bg_color = (0.23, 0.23, 0.24, 1)
+    fg_color = (0.95, 0.95, 0.95, 1)
+    cursor_color = (0.95, 0.95, 0.95, 1)
+    radius = dp(20)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        Clock.schedule_once(self._bind_input, 0)
+
+    def _bind_input(self, dt):
+        inp = self.ids.get('input')
+        if inp is None:
+            return
+        if inp.text != self.text:
+            inp.text = self.text
+        inp.bind(text=self._on_input_text)
+
+    def _on_input_text(self, instance, value):
+        if self.text != value:
+            self.text = value
+
+
+class SettingsPopup(Popup):
+    current_host = ''
+    current_port = DEFAULT_PORT
+
+    def __init__(self, current_host, current_port, on_save=None, **kwargs):
+        super().__init__(**kwargs)
+        self.current_host = current_host
+        self.current_port = current_port
+        self._on_save = on_save
+        try:
+            self.ids.host_input.text = current_host
+            self.ids.port_input.text = str(current_port)
+        except Exception as e:
+            Logger.error(f'SettingsPopup init: {e}')
+
+    def save(self):
+        try:
+            host = self.ids.host_input.text.strip() or CURRENT_HOST
+            try:
+                port = int(self.ids.port_input.text.strip() or CURRENT_PORT)
+            except ValueError:
+                port = CURRENT_PORT
+            set_server(host, port)
+            if self._on_save:
+                self._on_save(host, port)
+            self.dismiss()
+        except Exception as e:
+            Logger.error(f'save settings: {e}')
+            show_error(str(e), title='Settings error')
+
+
+class KeyboardRoot(BoxLayout):
+    sender = None
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._last_text = ''
+        self._layout_state = None
+        Clock.schedule_once(self._bind_all, 0)
+
+    def _bind_all(self, dt):
+        ti = self.ids.get('live_input')
+        if ti is not None:
+            ti.bind(text=self._on_live_text_changed)
+
+        btn_en = self.ids.get('btn_en')
+        if btn_en is not None:
+            btn_en._on_press_cb = lambda: self.set_layout('en')
+
+        btn_ru = self.ids.get('btn_ru')
+        if btn_ru is not None:
+            btn_ru._on_press_cb = lambda: self.set_layout('ru')
+
+        btn_settings = self.ids.get('btn_settings')
+        if btn_settings is not None:
+            btn_settings._on_press_cb = self.open_settings
+
+        for name, key in (
+            ('btn_enter', 'KEY_ENTER'),
+            ('btn_backspace', 'KEY_BACKSPACE'),
+            ('btn_tab', 'KEY_TAB'),
+            ('btn_esc', 'KEY_ESC'),
+        ):
+            btn = self.ids.get(name)
+            if btn is not None:
+                btn._on_press_cb = (lambda k=key: self.send_key(k))
+
+        btn_back = self.ids.get('btn_back')
+        if btn_back is not None:
+            btn_back.bind(on_release=lambda *_: self.go_back())
+
+        if self.sender is not None:
+            self.sender.fetch_layout()
+
+    def _on_live_text_changed(self, instance, value):
+        cur = value or ''
+        prev = self._last_text or ''
+
+        if len(cur) < len(prev):
+            n = len(prev) - len(cur)
+            self.send('/backspace', {'count': n})
         else:
-            _enqueue('click', key=key)
-        sent += 1
-    return sent
+            added = cur[len(prev):]
+            if added:
+                self.send('/type', {'text': added})
+
+        self._last_text = cur
+
+    def send(self, endpoint, payload):
+        if self.sender is not None:
+            self.sender.send(endpoint, payload)
+
+    def send_key(self, combo):
+        self.send('/key', {'combo': combo})
+
+    def set_layout(self, layout):
+        self.send('/layout', {'layout': layout})
+
+    def on_layout_update(self, layout, switched=False):
+        self._layout_state = layout
+        self._refresh_layout_buttons()
+
+    def on_layout_from_server(self, layout):
+        self._layout_state = layout
+        self._refresh_layout_buttons()
+
+    def _refresh_layout_buttons(self):
+        for name, state in (('btn_en', 'en'), ('btn_ru', 'ru')):
+            btn = self.ids.get(name)
+            if btn is None:
+                continue
+            btn.state = 'down' if self._layout_state == state else 'normal'
+
+    def go_back(self):
+        try:
+            app = App.get_running_app()
+            if app is not None and hasattr(app, 'root'):
+                sm = app.root
+                if sm is not None and sm.has_screen('main'):
+                    sm.current = 'main'
+        except Exception as e:
+            Logger.error(f'go_back: {e}')
+
+    def open_settings(self):
+        try:
+            SettingsPopup(
+                current_host=CURRENT_HOST,
+                current_port=CURRENT_PORT,
+                on_save=lambda h, p: set_server(h, p),
+            ).open()
+        except Exception as e:
+            Logger.error(f'open settings: {e}')
+            show_error(str(e), title='Settings error')
 
 
-def press_key(key):
-    if device:
-        _enqueue('press', key=key)
+def _load_keyboard_kv():
+    for path in ("keyboard.kv", "kv/keyboard.kv", "screens/keyboard.kv"):
+        if exists(path):
+            try:
+                Builder.load_file(path)
+                Logger.info(f'keyboard: loaded kv {path}')
+            except Exception as e:
+                Logger.error(f'keyboard.kv load error {path}: {e}')
+            return
 
 
-def release_key(key):
-    if device:
-        _enqueue('release', key=key)
+def create_keyboard_screen(name="keyboard"):
+    _load_keyboard_kv()
 
-
-def click_key(key):
-    if device:
-        _enqueue('click', key=key)
-
-
-def combo(keys):
-    if device and keys:
-        _enqueue('combo', keys=keys)
-
-
-def backspace(n=1):
-    if not device:
-        return 0
-    n = max(0, min(int(n), 200))
-    for _ in range(n):
-        _enqueue('click', key=uinput.KEY_BACKSPACE)
-    return n
-
-
-def resolve_key(name):
-    """'KEY_ENTER' -> uinput.KEY_ENTER, или None."""
-    return getattr(uinput, name, None) if uinput else None
-
-
-# ============================================================
-#  Раскладка
-# ============================================================
-
-def _switch_layout():
-    global _current_layout
-    combo([uinput.KEY_LEFTMETA, uinput.KEY_SPACE])
-    if _current_layout == 'en':
-        _current_layout = 'ru'
-    elif _current_layout == 'ru':
-        _current_layout = 'en'
-    else:
-        _current_layout = 'en'
-
-
-def set_layout(target):
-    global _current_layout
-    if target not in ('en', 'ru'):
-        return _current_layout
-
-    if _current_layout is None:
-        _current_layout = 'en'
-
-    if _current_layout != target:
-        _switch_layout()
-
-    return _current_layout
-
-
-def get_layout():
-    return _current_layout
-
-
-# ============================================================
-#  HTTP-обработчики (по стилю mouse.py)
-# ============================================================
-
-def handle_type(payload):
-    if not KEYBOARD_ENABLED:
-        return {'status': 'disabled', 'message': 'Keyboard module disabled'}, 200
-    if not device:
-        return {'status': 'error', 'message': 'Keyboard device not available'}, 503
-    text = (payload or {}).get('text', '')
-    if not isinstance(text, str):
-        return {'status': 'error', 'message': 'text must be string'}, 400
-    sent = type_text(text)
-    return {'status': 'ok', 'sent': sent}, 200
-
-
-def handle_key(payload):
-    if not KEYBOARD_ENABLED:
-        return {'status': 'disabled', 'message': 'Keyboard module disabled'}, 200
-    if not device:
-        return {'status': 'error', 'message': 'Keyboard device not available'}, 503
-
-    combo_str = (payload or {}).get('combo', '')
-    if not isinstance(combo_str, str) or not combo_str:
-        return {'status': 'error', 'message': 'combo required'}, 400
-
-    keys = []
-    for name in combo_str.split('+'):
-        name = name.strip()
-        if not name:
-            continue
-        code = resolve_key(name)
-        if code is None:
-            return {'status': 'error', 'message': f'unknown key: {name}'}, 400
-        keys.append(code)
-
-    if keys:
-        combo(keys)
-    return {'status': 'ok', 'sent': combo_str}, 200
-
-
-def handle_backspace(payload):
-    if not KEYBOARD_ENABLED:
-        return {'status': 'disabled', 'message': 'Keyboard module disabled'}, 200
-    if not device:
-        return {'status': 'error', 'message': 'Keyboard device not available'}, 503
-    try:
-        n = int((payload or {}).get('count', 1))
-    except (TypeError, ValueError):
-        n = 1
-    sent = backspace(n)
-    return {'status': 'ok', 'sent': sent}, 200
-
-
-def handle_layout(payload, method):
-    if not KEYBOARD_ENABLED:
-        return {'status': 'disabled', 'message': 'Keyboard module disabled'}, 200
-    if not device:
-        return {'status': 'error', 'message': 'Keyboard device not available'}, 503
-
-    if method == 'GET':
-        return {'layout': get_layout()}, 200
-
-    target = (payload or {}).get('layout', '')
-    if target not in ('en', 'ru'):
-        return {'status': 'error', 'message': 'layout must be en or ru'}, 400
-    before = get_layout()
-    set_layout(target)
-    after = get_layout()
-    return {'layout': after, 'switched': before != after}, 200
-
-
-# ============================================================
-#  Flask
-# ============================================================
-
-app = Flask(__name__)
-
-
-class SilentHandler(WSGIRequestHandler):
-    def log_request(self, code='-', size='-'):
-        pass
-
-    def log_message(self, format, *args):
-        pass
-
-
-@app.route('/')
-def index():
-    return (
-        "<h1>Virtual Keyboard Server</h1>"
-        f"<p>KEYBOARD_ENABLED: {KEYBOARD_ENABLED}</p>"
-        f"<p>Keyboard device: {'OK' if is_available() else 'NOT AVAILABLE'}</p>"
-        f"<p>Layout (server view): {_current_layout or '?'}</p>"
+    sender = HttpSender(
+        base_url_provider=_base_url,
+        on_error=_keyboard_http_error,
     )
 
+    scr = Screen(name=name)
+    scr.sender = sender
 
-@app.route('/keyboard/type', methods=['POST'])
-def keyboard_type():
-    payload = request.get_json(silent=True) or {}
-    result, status = handle_type(payload)
-    return jsonify(result), status
+    root = KeyboardRoot()
+    root.sender = sender
 
+    sender._on_layout = root.on_layout_from_server
 
-@app.route('/keyboard/key', methods=['POST'])
-def keyboard_key():
-    payload = request.get_json(silent=True) or {}
-    result, status = handle_key(payload)
-    return jsonify(result), status
+    scr.add_widget(root)
+    return scr
 
 
-@app.route('/keyboard/backspace', methods=['POST'])
-def keyboard_backspace():
-    payload = request.get_json(silent=True) or {}
-    result, status = handle_backspace(payload)
-    return jsonify(result), status
+def _keyboard_http_error(err):
+    Logger.warning(f'Keyboard HTTP error: {err}')
+    show_error(err, title='Connection error', duration=2.5)
 
 
-@app.route('/keyboard/layout', methods=['GET', 'POST'])
-def keyboard_layout():
-    payload = request.get_json(silent=True) or {}
-    result, status = handle_layout(payload, request.method)
-    return jsonify(result), status
-
-
-# ============================================================
-#  main — как в mouse.py
-# ============================================================
-
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def stop_keyboard_screen(scr):
     try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
-
-
-def main():
-    PORT = 42001
-    init_uinput()
-    start_worker()
-    ip = get_local_ip()
-    print(f"{ip}:{PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False,
-            threaded=True, request_handler=SilentHandler)
-
-
-if __name__ == '__main__':
-    main()
+        sender = getattr(scr, 'sender', None)
+        if sender:
+            sender.stop()
+    except Exception as e:
+        Logger.error(f'stop_keyboard_screen: {e}')

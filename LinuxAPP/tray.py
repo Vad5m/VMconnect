@@ -1,13 +1,28 @@
-from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+import os
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction, QApplication
 from PyQt5.QtGui import QIcon
 
 
 class TrayIcon(QSystemTrayIcon):
+    _instances = []
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setIcon(QIcon.fromTheme("preferences-system"))
+
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "icon.png")
+        self.setIcon(QIcon(icon_path))
+
         self._setup_menu()
         self.activated.connect(self._on_activated)
+
+    @classmethod
+    def create_for_all_screens(cls, parent=None):
+        cls._instances.clear()
+        for screen in QApplication.screens():
+            tray = cls(parent)
+            cls._instances.append(tray)
+            tray.show()
+        return cls._instances
 
     def _setup_menu(self):
         menu = QMenu()

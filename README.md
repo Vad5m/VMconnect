@@ -1,8 +1,6 @@
 # VMconnect
 
 > **Only for Linux + Android**
-
-
 <pre>
 ⣿⣿⣿⠟⠛⠛⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⢋⣩⣉⢻⣿⣿   This is not a fork of KDEconnect, 
 ⣿⣿⣿⠀⣿⣶⣕⣈⠹⠿⠿⠿⠿⠟⠛⣛⢋⣰⠣⣿⣿⠀⣿⣿   this is my personal project, 

@@ -1,5 +1,7 @@
+import sys
 import json
 import os
+import importlib
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QFrame, QPushButton)
@@ -14,6 +16,19 @@ import ssh
 import app_connect
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+
+MODULE_MAP = {
+    "mouse": "mouse",
+    "keyboard": "keyboard",
+    "gamepad": "gamepad",
+    "voice_control": "voice_control",
+    "ai_assistant": "ai_assistant",
+    "ssh": "ssh",
+    "ftp_server": "webftp",
+    "notifications": "notifications",
+    "sound": "sound",
+    "microphone": "microphone",
+}
 
 
 class ToggleSwitch(QPushButton):
@@ -120,9 +135,8 @@ class SettingsWindow(QMainWindow):
 
         main_layout.addStretch()
 
-        self.apply_mouse_state(self.toggles["mouse"].isChecked())
-        self.apply_keyboard_state(self.toggles["keyboard"].isChecked())
-        self.apply_ssh_state(self.toggles["ssh"].isChecked())
+        for key, toggle in self.toggles.items():
+            self.apply_module_state(key, toggle.isChecked())
 
         self.tray_icon = TrayIcon(self)
         self.tray_icon.on_show = self.show_window
@@ -154,44 +168,80 @@ class SettingsWindow(QMainWindow):
         if self.on_quit:
             self.on_quit()
 
-    def apply_mouse_state(self, enabled: bool):
+    def _get_module(self, key):
+        module_name = MODULE_MAP.get(key)
+        if not module_name:
+            return None
+
+        if sys.platform.startswith("win"):
+            try:
+                return importlib.import_module(f"win-{module_name}")
+            except ImportError:
+                pass
+
         try:
-            if enabled:
-                if hasattr(mouse, "enable"):
-                    mouse.enable()
-                else:
-                    mouse.MOUSE_ENABLED = True
-            else:
-                if hasattr(mouse, "disable"):
-                    mouse.disable()
-                else:
-                    mouse.MOUSE_ENABLED = False
+            return importlib.import_module(module_name)
         except Exception as e:
-            print(f"[mouse] не удалось применить состояние ({enabled}): {e}")
+            print(f"[{key}] не удалось импортировать модуль '{module_name}': {e}")
+            return None
+
+    def apply_module_state(self, key: str, enabled: bool):
+        module = self._get_module(key)
+        if module is None:
+            return
+
+        if key == "ssh":
+            try:
+                if enabled:
+                    module.start_server()
+                else:
+                    module.stop_server(timeout=3)
+            except Exception as e:
+                print(f"[ssh] не удалось применить состояние ({enabled}): {e}")
+            return
+
+        if key == "ftp_server":
+            try:
+                if enabled:
+                    port = getattr(module, "FTP_PORT_PC", 42004)
+                    module.start_server(port)
+                    url_getter = getattr(module, "get_url", None)
+                    if callable(url_getter):
+                        print(f"[webftp] запущен: {url_getter()}")
+                else:
+                    module.stop_server(timeout=3)
+                    print("[webftp] остановлен")
+            except Exception as e:
+                print(f"[webftp] не удалось применить состояние ({enabled}): {e}")
+            return
+
+        func = getattr(module, "enable" if enabled else "disable", None)
+        if callable(func):
+            try:
+                func()
+            except Exception as e:
+                print(f"[{key}] ошибка вызова {func.__name__}: {e}")
+            return
+
+        flag_name = f"{key.upper()}_ENABLED"
+        if hasattr(module, flag_name):
+            try:
+                setattr(module, flag_name, enabled)
+            except Exception as e:
+                print(f"[{key}] не удалось установить {flag_name}: {e}")
+            return
+
+        print(f"[{key}] модуль не предоставляет enable()/disable() "
+              f"или флаг {flag_name} — состояние не применено")
+
+    def apply_mouse_state(self, enabled: bool):
+        self.apply_module_state("mouse", enabled)
 
     def apply_keyboard_state(self, enabled: bool):
-        try:
-            if enabled:
-                if hasattr(keyboard, "enable"):
-                    keyboard.enable()
-                else:
-                    keyboard.KEYBOARD_ENABLED = True
-            else:
-                if hasattr(keyboard, "disable"):
-                    keyboard.disable()
-                else:
-                    keyboard.KEYBOARD_ENABLED = False
-        except Exception as e:
-            print(f"[keyboard] не удалось применить состояние ({enabled}): {e}")
+        self.apply_module_state("keyboard", enabled)
 
     def apply_ssh_state(self, enabled: bool):
-        try:
-            if enabled:
-                ssh.start_server()
-            else:
-                ssh.stop_server(timeout=3)
-        except Exception as e:
-            print(f"[ssh] не удалось применить состояние ({enabled}): {e}")
+        self.apply_module_state("ssh", enabled)
 
     def load_settings(self):
         default_settings = {
@@ -211,9 +261,7 @@ class SettingsWindow(QMainWindow):
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     saved = json.load(f)
                 default_settings.update(saved)
-                print(f"[settings] загружено из {CONFIG_FILE}: "
-                      f"mouse={default_settings.get('mouse')}, "
-                      f"keyboard={default_settings.get('keyboard')}")
+                print(f"[settings] загружено из {CONFIG_FILE}")
             except Exception as e:
                 print(f"[settings] ошибка загрузки: {e}")
         else:
@@ -226,25 +274,18 @@ class SettingsWindow(QMainWindow):
                 self.settings[key] = toggle.isChecked()
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=4, ensure_ascii=False)
-            print(f"[settings] сохранено в {CONFIG_FILE}: "
-                  f"mouse={self.settings.get('mouse')}, "
-                  f"keyboard={self.settings.get('keyboard')}")
+            print(f"[settings] сохранено в {CONFIG_FILE}")
         except Exception as e:
             print(f"[settings] ошибка сохранения: {e}")
 
     def on_toggle_changed(self, checked):
         toggle = self.sender()
         key = getattr(toggle, "key", None)
+        if not key:
+            return
 
-        if key == "mouse":
-            self.apply_mouse_state(checked)
-        elif key == "keyboard":
-            self.apply_keyboard_state(checked)
-        elif key == "ssh":
-            self.apply_ssh_state(checked)
-
+        self.apply_module_state(key, checked)
         self.save_settings()
-
         app_connect.broadcast(self.settings)
 
         cb = getattr(self, "on_setting_changed", None)

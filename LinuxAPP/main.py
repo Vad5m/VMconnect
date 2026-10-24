@@ -1,15 +1,21 @@
-import sys, threading
+import sys, threading, importlib
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
 from gui import SettingsWindow
-import mouse
-import keyboard
-import gamepad
 import ssh
 import app_connect
 import webftp
+
+if sys.platform.startswith("win"):
+    mouse    = importlib.import_module("win-mouse")
+    keyboard = importlib.import_module("win-keyboard")
+    gamepad  = importlib.import_module("win-gamepad")
+else:
+    import mouse
+    import keyboard
+    import gamepad
 
 
 class ports:
@@ -52,49 +58,41 @@ class Application:
     def on_setting_changed(self, key, value):
         if key == "ftp_server":
             if value:
-                try:
-                    webftp.start_server(webftp.FTP_PORT_PC)
-                    print(f"[webftp] запущен: {webftp.get_url()}")
-                except Exception as e:
-                    print(f"[webftp] start error: {e}")
+                print("[main] ftp_server включён")
             else:
-                try:
-                    webftp.stop_server(timeout=3)
-                    print("[webftp] остановлен")
-                except Exception as e:
-                    print(f"[webftp] stop error: {e}")
+                print("[main] ftp_server выключен")
 
     def run(self):
         self.start_settings_server()
         self.start_mouse()
         self.start_keyboard()
         self.start_gamepad()
-        if self.window.settings.get("ftp_server"):
-            self.on_setting_changed("ftp_server", True)
         self.window.show()
+
         exit_code = self.app.exec_()
+
         self.stop_server()
+        self._safe_stop_ssh()
+        self._safe_stop_webftp()
+        sys.exit(exit_code)
+
+    def _safe_stop_ssh(self):
         try:
             ssh.stop_server(timeout=2)
         except Exception:
             pass
+
+    def _safe_stop_webftp(self):
         try:
             webftp.stop_server(timeout=3)
         except Exception:
             pass
-        sys.exit(exit_code)
 
     def quit(self):
         self.window.save_settings()
         self.stop_server()
-        try:
-            ssh.stop_server(timeout=2)
-        except Exception:
-            pass
-        try:
-            webftp.stop_server(timeout=3)
-        except Exception:
-            pass
+        self._safe_stop_ssh()
+        self._safe_stop_webftp()
         self.app.quit()
 
 
@@ -108,6 +106,5 @@ def main():
 
 
 if __name__ == "__main__":
-    ascii = "ascii"
-    print(ascii)
+    print("ascii")
     main()

@@ -1,29 +1,23 @@
 import socket
 import warnings
 import time
-from threading import Lock
-from collections import deque
 
 warnings.filterwarnings('ignore')
 
 try:
-    from pynput.mouse import Controller, Button
-    PYNPUT_AVAILABLE = True
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0
 except ImportError:
-    PYNPUT_AVAILABLE = False
-    Controller = None
-    Button = None
+    PYAUTOGUI_AVAILABLE = False
+    pyautogui = None
 
 from flask import Flask, request, jsonify
-from werkzeug.serving import WSGIRequestHandler
 
 MOUSE_ENABLED = True
 
-mouse = None
-mouse_lock = Lock()
-move_queue = deque(maxlen=1000)
-scroll_queue = deque(maxlen=100)
-_worker_started = False
+app = Flask(__name__)
 
 
 def enable():
@@ -38,98 +32,8 @@ def disable():
     return MOUSE_ENABLED
 
 
-def init_pynput():
-    global mouse
-    if not PYNPUT_AVAILABLE:
-        return False
-    try:
-        mouse = Controller()
-        return True
-    except Exception:
-        return False
-
-
 def is_available():
-    return mouse is not None
-
-
-def _move_worker():
-    from threading import Thread
-    last_move = 0.0
-    while True:
-        try:
-            if not mouse:
-                time.sleep(0.1)
-                continue
-            now = time.time()
-            if move_queue and (now - last_move) >= 0.004:
-                with mouse_lock:
-                    if move_queue:
-                        dx, dy = move_queue.popleft()
-                    else:
-                        dx = dy = 0
-                if dx or dy:
-                    mouse.move(int(dx), int(dy))
-                last_move = now
-                continue
-            if scroll_queue:
-                with mouse_lock:
-                    if scroll_queue:
-                        delta = scroll_queue.popleft()
-                    else:
-                        delta = 0
-                if delta:
-                    mouse.scroll(0, int(delta))
-                continue
-            time.sleep(0.001)
-        except Exception:
-            time.sleep(0.1)
-
-
-def start_worker():
-    global _worker_started
-    if _worker_started:
-        return
-    from threading import Thread
-    worker_thread = Thread(target=_move_worker, daemon=True)
-    worker_thread.start()
-    _worker_started = True
-
-
-def move(dx, dy):
-    if mouse and (dx != 0 or dy != 0):
-        with mouse_lock:
-            move_queue.append((dx, dy))
-
-
-def scroll(delta):
-    if mouse and delta != 0:
-        with mouse_lock:
-            scroll_queue.append(delta)
-
-
-def click_left():
-    if mouse:
-        mouse.click(Button.left)
-
-
-def click_right():
-    if mouse:
-        mouse.click(Button.right)
-
-
-def click_middle():
-    if mouse:
-        mouse.click(Button.middle)
-
-
-def click(button='left'):
-    if button == 'left':
-        click_left()
-    elif button == 'right':
-        click_right()
-    elif button == 'middle':
-        click_middle()
+    return PYAUTOGUI_AVAILABLE and pyautogui is not None
 
 
 def handle_move(payload):
@@ -137,9 +41,11 @@ def handle_move(payload):
         return {'status': 'disabled', 'message': 'Mouse module disabled'}, 200
     dx = (payload or {}).get('dx', 0)
     dy = (payload or {}).get('dy', 0)
-    if not mouse:
+    if not is_available():
         return {'status': 'error', 'message': 'Mouse device not available'}, 503
-    move(dx, dy)
+    if dx or dy:
+        pyautogui.moveRel(int(dx), int(dy), duration=0)
+        time.sleep(0.01)
     return {'status': 'ok'}, 200
 
 
@@ -147,9 +53,10 @@ def handle_scroll(payload):
     if not MOUSE_ENABLED:
         return {'status': 'disabled', 'message': 'Mouse module disabled'}, 200
     delta = (payload or {}).get('delta', 0)
-    if not mouse:
+    if not is_available():
         return {'status': 'error', 'message': 'Mouse device not available'}, 503
-    scroll(delta)
+    if delta:
+        pyautogui.scroll(int(delta))
     return {'status': 'ok'}, 200
 
 
@@ -157,35 +64,68 @@ def handle_click(payload):
     if not MOUSE_ENABLED:
         return {'status': 'disabled', 'message': 'Mouse module disabled'}, 200
     button = (payload or {}).get('button', 'left')
-    if not mouse:
+    if not is_available():
         return {'status': 'error', 'message': 'Mouse device not available'}, 503
-    click(button)
+    pyautogui.click(button=button)
     return {'status': 'ok'}, 200
-
-
-app = Flask(__name__)
-
-
-class SilentHandler(WSGIRequestHandler):
-    def log_request(self, code='-', size='-'):
-        pass
-
-    def log_message(self, format, *args):
-        pass
 
 
 @app.route('/')
 def index():
     return (
-        "<h1>Virtual Mouse Server</h1>"
+        "<h1>Virtual Mouse Server (PyAutoGUI)</h1>"
         f"<p>MOUSE_ENABLED: {MOUSE_ENABLED}</p>"
         f"<p>Mouse device: {'OK' if is_available() else 'NOT AVAILABLE'}</p>"
     )
 
 
+@app.route('/test_move')
+def test_move():
+    print("[LOG] GET /test_move")
+    if not is_available():
+        return "Mouse NOT AVAILABLE", 503
+    pyautogui.moveRel(50, 50, duration=0.2)
+    return "Moved 50px right and down"
+
+
+@app.route('/move')
+def move_get():
+    dx = int(request.args.get('dx', 0))
+    dy = int(request.args.get('dy', 0))
+    print(f"[LOG] GET /move dx={dx} dy={dy}")
+    if not is_available():
+        return "Mouse NOT AVAILABLE", 503
+    if dx or dy:
+        pyautogui.moveRel(dx, dy, duration=0)
+        time.sleep(0.01)
+    return f"Moved dx={dx}, dy={dy}"
+
+
+@app.route('/click_get')
+def click_get():
+    button = request.args.get('button', 'left')
+    print(f"[LOG] GET /click_get button={button}")
+    if not is_available():
+        return "Mouse NOT AVAILABLE", 503
+    pyautogui.click(button=button)
+    return f"Clicked {button}"
+
+
+@app.route('/scroll_get')
+def scroll_get():
+    delta = int(request.args.get('delta', 0))
+    print(f"[LOG] GET /scroll_get delta={delta}")
+    if not is_available():
+        return "Mouse NOT AVAILABLE", 503
+    if delta:
+        pyautogui.scroll(delta)
+    return f"Scrolled {delta}"
+
+
 @app.route('/mouse/move', methods=['POST'])
 def mouse_move():
     payload = request.get_json(silent=True) or {}
+    print(f"[LOG] POST /mouse/move payload={payload}")
     result, status = handle_move(payload)
     return jsonify(result), status
 
@@ -193,6 +133,7 @@ def mouse_move():
 @app.route('/mouse/scroll', methods=['POST'])
 def mouse_scroll():
     payload = request.get_json(silent=True) or {}
+    print(f"[LOG] POST /mouse/scroll payload={payload}")
     result, status = handle_scroll(payload)
     return jsonify(result), status
 
@@ -200,6 +141,7 @@ def mouse_scroll():
 @app.route('/mouse/click', methods=['POST'])
 def mouse_click():
     payload = request.get_json(silent=True) or {}
+    print(f"[LOG] POST /mouse/click payload={payload}")
     result, status = handle_click(payload)
     return jsonify(result), status
 
@@ -218,12 +160,11 @@ def get_local_ip():
 
 def main():
     PORT = 42000
-    init_pynput()
-    start_worker()
     ip = get_local_ip()
-    print(f"{ip}:{PORT}")
+    print(f"[LOG] Server starting on {ip}:{PORT}")
+    print(f"[LOG] Mouse available: {is_available()}")
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False,
-            threaded=True, request_handler=SilentHandler)
+            threaded=True)
 
 
 if __name__ == '__main__':

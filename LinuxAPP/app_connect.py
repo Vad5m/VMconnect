@@ -3,9 +3,12 @@ import socket
 import threading
 import time
 import subprocess
-import getpass
 import webbrowser
 import os
+
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                             QLineEdit, QPushButton)
+from PyQt5.QtCore import Qt
 
 DISCOVERY_PORT = 42420
 SERVICE_PORT = 42042
@@ -14,10 +17,75 @@ PORTS = [(DISCOVERY_PORT, 'udp'), (SERVICE_PORT, 'tcp')]
 PORT_RANGE_START = 42000
 PORT_RANGE_END = 42100
 
-PASSWORD_FILE = os.path.expanduser('~/.app_connect_sudo_pass.json')
+PASSWORD_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "sudo.json"
+)
 
 _SUDO_PASSWORD = None
 _IS_WINDOWS = os.name == 'nt'
+
+
+class SudoPasswordDialog(QDialog):
+    def __init__(self, parent=None, error_text=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ввод sudo пароля")
+        self.setModal(True)
+        self.setMinimumWidth(320)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        layout = QVBoxLayout(self)
+
+        if error_text:
+            err_label = QLabel(error_text)
+            err_label.setStyleSheet("color: #c0392b;")
+            err_label.setWordWrap(True)
+            layout.addWidget(err_label)
+
+        info = QLabel("Введите пароль sudo (для ufw):")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.password_edit = QLineEdit()
+        self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit.setPlaceholderText("Пароль")
+        layout.addWidget(self.password_edit)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        ok_btn = QPushButton("OK")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(ok_btn)
+
+        layout.addLayout(btn_layout)
+
+        self.password_edit.returnPressed.connect(self.accept)
+
+    def get_password(self):
+        return self.password_edit.text()
+
+
+def _ask_password_dialog(error_text=None):
+    try:
+        from PyQt5.QtWidgets import QApplication
+    except Exception:
+        return None
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    dlg = SudoPasswordDialog(error_text=error_text)
+    result = dlg.exec_()
+    if result == QDialog.Accepted:
+        return dlg.get_password()
+    return None
 
 
 def _load_password():
@@ -36,7 +104,9 @@ def _load_password():
                 return _SUDO_PASSWORD
         except Exception:
             pass
-    pwd = getpass.getpass("sudo пароль (для ufw): ")
+    pwd = _ask_password_dialog()
+    if pwd is None:
+        return None
     _SUDO_PASSWORD = pwd
     try:
         with open(PASSWORD_FILE, 'w', encoding='utf-8') as f:
@@ -59,6 +129,8 @@ def _save_password(pwd):
 
 
 def _check_sudo_password(password):
+    if password is None:
+        return False
     try:
         r = subprocess.run(
             ['sudo', '-S', '-k', 'true'],
@@ -85,9 +157,12 @@ def _sudo_run(args, use_password=False):
             if r.returncode == 0:
                 return r
             err = (r.stderr or '').lower()
-            if 'incorrect password' in err or 'неверный пароль' in err or 'sorry, try again' in err or 'неправильный пароль' in err:
+            if ('incorrect password' in err or 'неверный пароль' in err
+                    or 'sorry, try again' in err or 'неправильный пароль' in err):
                 print("[err] неверный sudo пароль, попробуйте снова")
-                password = getpass.getpass("sudo пароль (для ufw): ")
+                password = _ask_password_dialog("Неверный пароль. Попробуйте снова.")
+                if password is None:
+                    return r
                 _save_password(password)
                 continue
             return r

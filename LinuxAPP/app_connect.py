@@ -14,19 +14,23 @@ PORTS = [(DISCOVERY_PORT, 'udp'), (SERVICE_PORT, 'tcp')]
 PORT_RANGE_START = 42000
 PORT_RANGE_END = 42100
 
-PASSWORD_FILE = os.path.expanduser('~/.app_connect_sudo_pass')
+PASSWORD_FILE = os.path.expanduser('~/.app_connect_sudo_pass.json')
 
 _SUDO_PASSWORD = None
+_IS_WINDOWS = os.name == 'nt'
 
 
 def _load_password():
     global _SUDO_PASSWORD
+    if _IS_WINDOWS:
+        return None
     if _SUDO_PASSWORD is not None:
         return _SUDO_PASSWORD
     if os.path.exists(PASSWORD_FILE):
         try:
-            with open(PASSWORD_FILE, 'r') as f:
-                pwd = f.read().strip()
+            with open(PASSWORD_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            pwd = data.get('password', '')
             if pwd:
                 _SUDO_PASSWORD = pwd
                 return _SUDO_PASSWORD
@@ -35,21 +39,58 @@ def _load_password():
     pwd = getpass.getpass("sudo пароль (для ufw): ")
     _SUDO_PASSWORD = pwd
     try:
-        with open(PASSWORD_FILE, 'w') as f:
-            f.write(pwd)
+        with open(PASSWORD_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'password': pwd}, f, ensure_ascii=False)
         os.chmod(PASSWORD_FILE, 0o600)
     except Exception as e:
         print(f"[warn] не удалось сохранить пароль: {e}")
     return _SUDO_PASSWORD
 
 
+def _save_password(pwd):
+    global _SUDO_PASSWORD
+    _SUDO_PASSWORD = pwd
+    try:
+        with open(PASSWORD_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'password': pwd}, f, ensure_ascii=False)
+        os.chmod(PASSWORD_FILE, 0o600)
+    except Exception as e:
+        print(f"[warn] не удалось сохранить пароль: {e}")
+
+
+def _check_sudo_password(password):
+    try:
+        r = subprocess.run(
+            ['sudo', '-S', '-k', 'true'],
+            input=password + '\n', text=True, capture_output=True
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def _sudo_run(args, use_password=False):
     if use_password:
         password = _load_password()
-        return subprocess.run(
-            ['sudo', '-S'] + args,
-            input=password + '\n', text=True, capture_output=True
-        )
+        while True:
+            if password is None:
+                return subprocess.run(
+                    ['sudo', '-n'] + args,
+                    text=True, capture_output=True
+                )
+            r = subprocess.run(
+                ['sudo', '-S'] + args,
+                input=password + '\n', text=True, capture_output=True
+            )
+            if r.returncode == 0:
+                return r
+            err = (r.stderr or '').lower()
+            if 'incorrect password' in err or 'неверный пароль' in err or 'sorry, try again' in err or 'неправильный пароль' in err:
+                print("[err] неверный sudo пароль, попробуйте снова")
+                password = getpass.getpass("sudo пароль (для ufw): ")
+                _save_password(password)
+                continue
+            return r
     return subprocess.run(
         ['sudo', '-n'] + args,
         text=True, capture_output=True
@@ -57,6 +98,8 @@ def _sudo_run(args, use_password=False):
 
 
 def _ufw_status():
+    if _IS_WINDOWS:
+        return subprocess.CompletedProcess(args=['ufw'], returncode=1, stdout='', stderr='windows')
     r = _sudo_run(['ufw', 'status'], use_password=False)
     if r.returncode == 0:
         return r
@@ -65,6 +108,8 @@ def _ufw_status():
 
 
 def ufw_rule_exists(port, proto):
+    if _IS_WINDOWS:
+        return True
     r = _ufw_status()
     if r.returncode != 0:
         return None
@@ -72,6 +117,8 @@ def ufw_rule_exists(port, proto):
 
 
 def _ufw_allow(rule):
+    if _IS_WINDOWS:
+        return subprocess.CompletedProcess(args=['ufw'], returncode=0, stdout='', stderr='')
     r = _sudo_run(['ufw', 'allow', rule], use_password=False)
     if r.returncode == 0:
         return r
@@ -79,6 +126,8 @@ def _ufw_allow(rule):
 
 
 def ensure_ports(ports):
+    if _IS_WINDOWS:
+        return True
     unknown = []
     to_open = []
     for p, pr in ports:
@@ -104,6 +153,8 @@ def ensure_ports(ports):
 
 
 def ensure_port_range(start, end, proto='tcp'):
+    if _IS_WINDOWS:
+        return True
     r = _ufw_status()
     if r.returncode == 0:
         all_open = True
@@ -385,14 +436,15 @@ def start_all():
     if _started:
         return
 
-    if not ensure_port_range(PORT_RANGE_START, PORT_RANGE_END, 'tcp'):
-        raise SystemExit("Не удалось открыть диапазон TCP портов")
+    if not _IS_WINDOWS:
+        if not ensure_port_range(PORT_RANGE_START, PORT_RANGE_END, 'tcp'):
+            raise SystemExit("Не удалось открыть диапазон TCP портов")
 
-    if not ensure_port_range(PORT_RANGE_START, PORT_RANGE_END, 'udp'):
-        raise SystemExit("Не удалось открыть диапазон UDP портов")
+        if not ensure_port_range(PORT_RANGE_START, PORT_RANGE_END, 'udp'):
+            raise SystemExit("Не удалось открыть диапазон UDP портов")
 
-    if not ensure_ports(PORTS):
-        raise SystemExit("Не удалось открыть порты")
+        if not ensure_ports(PORTS):
+            raise SystemExit("Не удалось открыть порты")
 
     _discovery_thread = threading.Thread(
         target=start_discovery_server,
